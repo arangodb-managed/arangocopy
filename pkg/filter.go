@@ -24,14 +24,14 @@ package pkg
 
 import "github.com/arangodb/go-driver"
 
-// filterDatabases takes a list of databases and filters them according to setup
+// filterDatabases takes a list of databases and filters it according to the set up
 // included and excluded filters.
 func (c *copier) filterDatabases(dbs []driver.Database) []driver.Database {
 	names := make([]string, 0)
 	for _, db := range dbs {
 		names = append(names, db.Name())
 	}
-	filter := filterList(c.databaseInclude, c.databaseExclude, names)
+	filter := filterList(names, c.databaseInclude, c.databaseExclude)
 	ret := make([]driver.Database, 0)
 	for _, db := range dbs {
 		if _, ok := filter[db.Name()]; ok {
@@ -41,14 +41,14 @@ func (c *copier) filterDatabases(dbs []driver.Database) []driver.Database {
 	return ret
 }
 
-// filterCollections takes a list of collections and filters them according to setup
+// filterCollections takes a list of collections and filters it according to the set up
 // included and excluded filters.
 func (c *copier) filterCollections(items []driver.Collection) []driver.Collection {
 	names := make([]string, 0)
 	for _, item := range items {
 		names = append(names, item.Name())
 	}
-	filter := filterList(c.collectionInclude, c.collectionExclude, names)
+	filter := filterList(names, c.collectionInclude, c.collectionExclude)
 	ret := make([]driver.Collection, 0)
 	for _, item := range items {
 		if _, ok := filter[item.Name()]; ok {
@@ -58,14 +58,14 @@ func (c *copier) filterCollections(items []driver.Collection) []driver.Collectio
 	return ret
 }
 
-// filterViews takes a list of views and filters them according to setup
+// filterViews takes a list of views and filters it according to the set up
 // included and excluded filters.
 func (c *copier) filterViews(items []driver.View) []driver.View {
 	names := make([]string, 0)
 	for _, item := range items {
 		names = append(names, item.Name())
 	}
-	filter := filterList(c.viewInclude, c.viewExclude, names)
+	filter := filterList(names, c.viewInclude, c.viewExclude)
 	ret := make([]driver.View, 0)
 	for _, item := range items {
 		if _, ok := filter[item.Name()]; ok {
@@ -75,9 +75,11 @@ func (c *copier) filterViews(items []driver.View) []driver.View {
 	return ret
 }
 
-// filterList constructs a list after filtering it with include and exclude data.
-// if data is present in include and exclude it will be exluded.
-func filterList(include, exclude map[string]struct{}, data []string) map[string]struct{} {
+// filterList will take a list and include, exclude filtes and generate a set of filters
+// to use, based on names. This can be extended to do different kind of name matchings like partial or regex.
+// If data is included in both, include and exclude, it will be excluded.
+// data, include, exclude
+func filterList(data []string, include, exclude map[string]struct{}) map[string]struct{} {
 	filter := make(map[string]struct{})
 	if len(include) > 0 {
 		for i := 0; i < len(data); i++ {

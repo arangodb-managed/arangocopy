@@ -110,31 +110,27 @@ func NewCopier(cfg Config, deps Dependencies) (Copier, error) {
 		c.destinationClient = client
 	}
 	// Set up filters
-	c.databaseInclude = make(map[string]struct{})
-	c.databaseExclude = make(map[string]struct{})
-	c.collectionInclude = make(map[string]struct{})
-	c.collectionExclude = make(map[string]struct{})
-	c.viewInclude = make(map[string]struct{})
-	c.viewExclude = make(map[string]struct{})
-	setupMap(c.databaseInclude, c.Config.IncludedDatabases)
-	setupMap(c.databaseExclude, c.Config.ExcludedDatabases)
-	setupMap(c.collectionInclude, c.Config.IncludedCollections)
-	setupMap(c.collectionExclude, c.Config.ExcludedCollections)
-	setupMap(c.viewInclude, c.Config.IncludedViews)
-	setupMap(c.viewExclude, c.Config.ExcludedViews)
+	c.databaseInclude = setupMap(c.Config.IncludedDatabases)
+	c.databaseExclude = setupMap(c.Config.ExcludedDatabases)
+	c.collectionInclude = setupMap(c.Config.IncludedCollections)
+	c.collectionExclude = setupMap(c.Config.ExcludedCollections)
+	c.viewInclude = setupMap(c.Config.IncludedViews)
+	c.viewExclude = setupMap(c.Config.ExcludedViews)
 	return c, nil
 }
 
 // A small helper to setup a map for filters.
-func setupMap(m map[string]struct{}, data []string) {
+func setupMap(data []string) map[string]struct{} {
+	m := make(map[string]struct{})
 	for _, f := range data {
 		m[f] = struct{}{}
 	}
+	return m
 }
 
-// getClient creates a client point to address and tests if that connection works.
+// getClient creates a client pointing to address and tests if that connection works.
 func (c *copier) getClient(address, username, password string) (driver.Client, error) {
-	log := c.Logger.With().Str("address", address).Logger()
+	log := c.Logger
 	// Open a connection
 	conn, err := http.NewConnection(http.ConnectionConfig{
 		Endpoints: []string{address},
@@ -162,7 +158,7 @@ func (c *copier) getClient(address, username, password string) (driver.Client, e
 		log.Error().Err(err).Msg("Failed to connect to database")
 		return nil, err
 	}
-	log.Debug().Msgf("Version at address is %s", version.String())
+	log.Debug().Msgf("Version at address (%s) is %s", address, version.String())
 	return client, nil
 }
 
@@ -193,30 +189,30 @@ func (c *copier) Copy() error {
 
 	databases := c.filterDatabases(sourceDbs)
 
-	if err := c.copyDatabases(ctx, databases); err != nil {
-		return err
-	}
-	log.Info().Msg("Done with all databases.")
 	for _, db := range databases {
+		if err := c.copyDatabase(ctx, db); err != nil {
+			return err
+		}
+		log.Info().Msg("Done with databases.")
 		if err := c.copyCollections(ctx, db); err != nil {
 			return err
 		}
-		log.Info().Msg("Done with all collections.")
+		log.Info().Msg("Done with collections.")
 		if err := c.copyIndexes(ctx, db); err != nil {
 			return err
 		}
-		log.Info().Msg("Done with all indexes.")
+		log.Info().Msg("Done with indexes.")
 
 		if err := c.copyViews(ctx, db); err != nil {
 			return err
 		}
-		log.Info().Msg("Done with all viewes.")
+		log.Info().Msg("Done with viewes.")
 	}
 
 	return nil
 }
 
-// copyCollections copies all collections for selected databases.
+// copyCollections copies all collections for a database.
 func (c *copier) copyCollections(ctx context.Context, db driver.Database) error {
 	log := c.Logger
 
@@ -231,15 +227,17 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	}
 	collections := c.filterCollections(list)
 
-	timeout := driver.WithQueryMaxRuntime(ctx, c.Timeout)
+	// TODO: This actually causes an issue where an ongoing, working query just throws a timeout and the cursor dies
+	// immediately without the possibility to retry the operation.
+	//timeout := driver.WithQueryMaxRuntime(ctx, c.Timeout)
 	destinationDB, err := c.destinationClient.Database(ctx, sourceDB.Name())
 	if err != nil {
 		c.Logger.Error().Err(err).Msg("Failed to ensure destination databases.")
 		return nil
 	}
-	readCtx := driver.WithQueryStream(timeout, true)
+	readCtx := driver.WithQueryStream(ctx, true)
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
-	restoreCtx := driver.WithIsRestore(timeout, true)
+	restoreCtx := driver.WithIsRestore(ctx, true)
 	var g errgroup.Group
 	sem := semaphore.NewWeighted(int64(c.Parallel))
 	for _, sourceColl := range collections {
@@ -260,7 +258,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			}
 			var destinationColl driver.Collection
 			if err := backoff.Retry(func() error {
-				dColl, err := c.ensureDestinationCollection(timeout, destinationDB, sourceColl, sourceProps)
+				dColl, err := c.ensureDestinationCollection(ctx, destinationDB, sourceColl, sourceProps)
 				if err != nil {
 					c.Logger.Error().Err(err).Msg("Failed to ensure destination collection.")
 					return err
@@ -385,7 +383,7 @@ func (c *copier) copyIndexes(ctx context.Context, db driver.Database) error {
 	return nil
 }
 
-// ensureDestinationDatabase ensures that a database exists in the destination database
+// ensureDestinationDatabase ensures that a database exists at the destination.
 func (c *copier) ensureDestinationDatabase(ctx context.Context, dbName string) error {
 	c.Logger.Debug().Str("database-name", dbName).Msg("Ensuring database exists")
 	if exists, err := c.destinationClient.DatabaseExists(ctx, dbName); err != nil {
@@ -398,7 +396,7 @@ func (c *copier) ensureDestinationDatabase(ctx context.Context, dbName string) e
 	return err
 }
 
-// ensureDestinationCollection ensures that a collection exists for a database on the destination and returns it
+// ensureDestinationCollection ensures that a collection exists for a database on the destination and returns it.
 func (c *copier) ensureDestinationCollection(ctx context.Context, db driver.Database, coll driver.Collection, props driver.CollectionProperties) (driver.Collection, error) {
 	c.Logger.Debug().Str("collection-name", coll.Name()).Msg("Ensuring collection exists")
 	exists, err := db.CollectionExists(ctx, coll.Name())
@@ -418,18 +416,16 @@ func (c *copier) ensureDestinationCollection(ctx context.Context, db driver.Data
 	return db.Collection(ctx, coll.Name())
 }
 
-// copyDatabases copies all databases to the destination.
-func (c *copier) copyDatabases(ctx context.Context, list []driver.Database) error {
-	for _, db := range list {
-		if err := backoff.Retry(func() error {
-			if err := c.ensureDestinationDatabase(ctx, db.Name()); err != nil {
-				return err
-			}
-			return nil
-		}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-			c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
+// copyDatabase creates a database at the destination.
+func (c *copier) copyDatabase(ctx context.Context, db driver.Database) error {
+	if err := backoff.Retry(func() error {
+		if err := c.ensureDestinationDatabase(ctx, db.Name()); err != nil {
 			return err
 		}
+		return nil
+	}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+		c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
+		return err
 	}
 	return nil
 }
