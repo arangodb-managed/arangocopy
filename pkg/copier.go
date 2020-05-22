@@ -96,14 +96,14 @@ func NewCopier(cfg Config, deps Dependencies) (Copier, error) {
 		Dependencies: deps,
 	}
 	// Set up source client.
-	if client, err := c.getClient(cfg.SourceAddress, cfg.SourceUsername, cfg.SourcePassword); err != nil {
+	if client, err := c.getClient("Source", cfg.SourceAddress, cfg.SourceUsername, cfg.SourcePassword); err != nil {
 		c.Logger.Error().Err(err).Msg("Failed to connect to source address.")
 		return nil, err
 	} else {
 		c.sourceClient = client
 	}
 	// Set up destination client.
-	if client, err := c.getClient(cfg.DestinationAddress, cfg.DestinationUsername, cfg.DestinationPassword); err != nil {
+	if client, err := c.getClient("Destination", cfg.DestinationAddress, cfg.DestinationUsername, cfg.DestinationPassword); err != nil {
 		c.Logger.Error().Err(err).Msg("Failed to connect to destination address.")
 		return nil, err
 	} else {
@@ -129,7 +129,7 @@ func setupMap(data []string) map[string]struct{} {
 }
 
 // getClient creates a client pointing to address and tests if that connection works.
-func (c *copier) getClient(address, username, password string) (driver.Client, error) {
+func (c *copier) getClient(prefix, address, username, password string) (driver.Client, error) {
 	log := c.Logger
 	// Open a connection
 	conn, err := http.NewConnection(http.ConnectionConfig{
@@ -158,7 +158,7 @@ func (c *copier) getClient(address, username, password string) (driver.Client, e
 		log.Error().Err(err).Msg("Failed to connect to database")
 		return nil, err
 	}
-	log.Debug().Msgf("Version at address (%s) is %s", address, version.String())
+	log.Debug().Msgf("%s: Version at address (%s) is %s", prefix, address, version.String())
 	return client, nil
 }
 
