@@ -24,6 +24,8 @@ package pkg
 
 import "github.com/arangodb/go-driver"
 
+// filterDatabases takes a list of databases and filters them according to setup
+// included and excluded filters.
 func (c *copier) filterDatabases(dbs []driver.Database) []driver.Database {
 	names := make([]string, 0)
 	for _, db := range dbs {
@@ -39,6 +41,8 @@ func (c *copier) filterDatabases(dbs []driver.Database) []driver.Database {
 	return ret
 }
 
+// filterCollections takes a list of collections and filters them according to setup
+// included and excluded filters.
 func (c *copier) filterCollections(items []driver.Collection) []driver.Collection {
 	names := make([]string, 0)
 	for _, item := range items {
@@ -54,6 +58,8 @@ func (c *copier) filterCollections(items []driver.Collection) []driver.Collectio
 	return ret
 }
 
+// filterViews takes a list of views and filters them according to setup
+// included and excluded filters.
 func (c *copier) filterViews(items []driver.View) []driver.View {
 	names := make([]string, 0)
 	for _, item := range items {
