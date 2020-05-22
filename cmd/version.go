@@ -20,20 +20,35 @@
 // Author Gergely Brautigam
 //
 
-package main
+package cmd
 
 import (
-	"log"
+	"fmt"
 
-	"github.com/arangodb-managed/arangocopy/cmd"
+	"github.com/coreos/go-semver/semver"
+	"github.com/spf13/cobra"
+)
+
+var (
+	currentVersion *semver.Version
+	// versionCmd is the command to show the current version of this tool
+	versionCmd = &cobra.Command{
+		Use:   "version",
+		Short: "Show the current version of this tool",
+		Run:   runVersionCmd,
+	}
 )
 
 func init() {
-	cmd.SetVersion(releaseVersion)
+	RootCmd.AddCommand(versionCmd)
 }
 
-func main() {
-	if err := cmd.RootCmd.Execute(); err != nil {
-		log.Fatalf("%v\n", err)
-	}
+// SetVersion must be called at bootstrap to pass the current build version
+func SetVersion(releaseVersion string) {
+	currentVersion = semver.Must(semver.NewVersion(releaseVersion))
+}
+
+// Run the service
+func runVersionCmd(cmd *cobra.Command, args []string) {
+	fmt.Println(currentVersion.String())
 }
