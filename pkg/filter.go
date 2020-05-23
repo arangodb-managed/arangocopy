@@ -82,9 +82,9 @@ func (c *copier) filterViews(items []driver.View) []driver.View {
 func filterList(data []string, include, exclude map[string]struct{}) map[string]struct{} {
 	filter := make(map[string]struct{})
 	if len(include) > 0 {
-		for i := 0; i < len(data); i++ {
-			if _, ok := include[data[i]]; ok {
-				filter[data[i]] = struct{}{}
+		for _, d := range data {
+			if _, ok := include[d]; ok {
+				filter[d] = struct{}{}
 			}
 		}
 	} else {
@@ -93,9 +93,9 @@ func filterList(data []string, include, exclude map[string]struct{}) map[string]
 		}
 	}
 	if len(exclude) > 0 {
-		for i := 0; i < len(data); i++ {
-			if _, ok := exclude[data[i]]; ok {
-				delete(filter, data[i])
+		for _, d := range data {
+			if _, ok := exclude[d]; ok {
+				delete(filter, d)
 			}
 		}
 	}

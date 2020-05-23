@@ -26,21 +26,17 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"time"
 
 	"github.com/cenkalti/backoff"
+	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
-	"github.com/rs/zerolog"
 )
 
 var (
-	// cursorTimeout needs to be a high value, otherwise the cursor disappears
-	// when a long read is being performed
-	cursorTimeout   = 2 * time.Hour
 	backoffMaxTries = 5
 )
 
@@ -158,7 +154,7 @@ func (c *copier) getClient(prefix, address, username, password string) (driver.C
 		log.Error().Err(err).Msg("Failed to connect to database")
 		return nil, err
 	}
-	log.Debug().Msgf("%s: Version at address (%s) is %s", prefix, address, version.String())
+	log.Info().Msgf("%s: Version at address (%s) is %s", prefix, address, version.String())
 	return client, nil
 }
 
@@ -212,6 +208,20 @@ func (c *copier) Copy() error {
 	return nil
 }
 
+// copyDatabase creates a database at the destination.
+func (c *copier) copyDatabase(ctx context.Context, db driver.Database) error {
+	if err := backoff.Retry(func() error {
+		if err := c.ensureDestinationDatabase(ctx, db.Name()); err != nil {
+			return err
+		}
+		return nil
+	}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+		c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
+		return err
+	}
+	return nil
+}
+
 // copyCollections copies all collections for a database.
 func (c *copier) copyCollections(ctx context.Context, db driver.Database) error {
 	log := c.Logger
@@ -232,7 +242,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	//timeout := driver.WithQueryMaxRuntime(ctx, c.Timeout)
 	destinationDB, err := c.destinationClient.Database(ctx, sourceDB.Name())
 	if err != nil {
-		c.Logger.Error().Err(err).Msg("Failed to ensure destination databases.")
+		c.Logger.Error().Err(err).Msg("Failed to get destination database.")
 		return nil
 	}
 	readCtx := driver.WithQueryStream(ctx, true)
@@ -314,7 +324,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				}
 			}
 			fmt.Println()
-			log.Debug().Str("collection", sourceColl.Name()).Msg("Done reader for collection.")
+			log.Debug().Str("collection", sourceColl.Name()).Msg("Done copying data for collection.")
 			cursor.Close()
 			return nil
 		})
@@ -414,18 +424,4 @@ func (c *copier) ensureDestinationCollection(ctx context.Context, db driver.Data
 		})
 	}
 	return db.Collection(ctx, coll.Name())
-}
-
-// copyDatabase creates a database at the destination.
-func (c *copier) copyDatabase(ctx context.Context, db driver.Database) error {
-	if err := backoff.Retry(func() error {
-		if err := c.ensureDestinationDatabase(ctx, db.Name()); err != nil {
-			return err
-		}
-		return nil
-	}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-		c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
-		return err
-	}
-	return nil
 }
