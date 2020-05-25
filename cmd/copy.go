@@ -23,8 +23,6 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 	flag "github.com/spf13/pflag"
 
@@ -106,7 +104,7 @@ func init() {
 				if err := copier.Copy(); err != nil {
 					log.Fatal().Err(err).Msg("Failed to copy. Please try again after issue is resolved.")
 				}
-				fmt.Println("Success!")
+				log.Info().Msg("Success!")
 			}
 		},
 	)
