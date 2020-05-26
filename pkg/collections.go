@@ -114,7 +114,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				cursor = cr
 				return nil
 			})
-			batch := make([]interface{}, c.BatchSize)
+			batch := make([]interface{}, 0, c.BatchSize)
 			for {
 				var d interface{}
 				if err := backoff.Retry(func() error {
@@ -136,7 +136,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 							c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Interface("document", d).Msg("Creating a document failed.")
 							return err
 						}
-						batch = make([]interface{}, c.BatchSize)
+						batch = make([]interface{}, 0, c.BatchSize)
 						return nil
 					}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
 						c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Backoff eventually failed.")

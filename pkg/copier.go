@@ -175,11 +175,16 @@ func (c *copier) Copy() error {
 
 	ctx := context.Background()
 	// Gather all databases
-	sourceDbs, err := c.sourceClient.Databases(ctx)
-	if err != nil {
-		c.Logger.Error().Err(err).Msg("Failed to get databases for source.")
-		return err
-	}
+	var sourceDbs []driver.Database
+	c.backoffCall(ctx, func() error {
+		dbs, err := c.sourceClient.Databases(ctx)
+		if err != nil {
+			c.Logger.Error().Err(err).Msg("Failed to get databases for source.")
+			return err
+		}
+		sourceDbs = dbs
+		return nil
+	})
 
 	databases := c.filterDatabases(sourceDbs)
 
