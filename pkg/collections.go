@@ -113,9 +113,17 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			bindVars := map[string]interface{}{
 				"@c": sourceColl.Name(),
 			}
-			cursor, err := sourceDB.Query(readCtx, "FOR d IN @@c RETURN d", bindVars)
-			if err != nil {
-				c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Failed to query source database for collection.")
+			var cursor driver.Cursor
+			if err := backoff.Retry(func() error {
+				cr, err := sourceDB.Query(readCtx, "FOR d IN @@c RETURN d", bindVars)
+				if err != nil {
+					c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Failed to query source database for collection.")
+					return err
+				}
+				cursor = cr
+				return nil
+			}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+				c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
 				return err
 			}
 			batch := make([]interface{}, c.BatchSize)
