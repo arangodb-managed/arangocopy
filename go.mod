@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/arangodb/go-driver v0.0.0-20200107125107-2a2392e62f69
+	github.com/briandowns/spinner v1.11.1
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/coreos/go-semver v0.3.0
 	github.com/rs/zerolog v1.14.3

@@ -24,8 +24,10 @@ package pkg
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/arangodb/go-driver"
+	"github.com/briandowns/spinner"
 	"github.com/cenkalti/backoff"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
@@ -45,10 +47,6 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 		return err
 	}
 	collections := c.filterCollections(list)
-
-	// TODO: This actually causes an issue where an ongoing, working query just throws a timeout and the cursor dies
-	// immediately without the possibility to retry the operation.
-	//timeout := driver.WithQueryMaxRuntime(ctx, c.Timeout)
 	destinationDB, err := c.destinationClient.Database(ctx, sourceDB.Name())
 	if err != nil {
 		c.Logger.Error().Err(err).Msg("Failed to get destination database.")
@@ -59,6 +57,9 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	restoreCtx := driver.WithIsRestore(ctx, true)
 	var g errgroup.Group
 	sem := semaphore.NewWeighted(int64(c.Parallel))
+	s := spinner.New(spinner.CharSets[34], 100*time.Millisecond)
+	fmt.Println()
+	s.Start()
 	for _, sourceColl := range collections {
 		sourceColl := sourceColl
 		g.Go(func() error {
@@ -88,7 +89,6 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
 				return err
 			}
-			log.Debug().Str("source-collection", sourceColl.Name()).Msg("Commencing data copy for collection...")
 			bindVars := map[string]interface{}{
 				"@c": sourceColl.Name(),
 			}
@@ -132,8 +132,6 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 					break
 				}
 			}
-			fmt.Println()
-			log.Debug().Str("collection", sourceColl.Name()).Msg("Done copying data for collection.")
 			cursor.Close()
 
 			// Copy over all indexes for this collection.
@@ -149,6 +147,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 		log.Error().Err(err).Msg("One of the workers failed to copy data.")
 		return err
 	}
+	s.Stop()
 	log.Debug().Str("source-database", sourceDB.Name()).Msg("Done copying database data.")
 	return nil
 }
@@ -160,7 +159,6 @@ func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, 
 
 // ensureDestinationCollection ensures that a collection exists for a database on the destination and returns it.
 func (c *copier) ensureDestinationCollection(ctx context.Context, db driver.Database, coll driver.Collection, props driver.CollectionProperties) (driver.Collection, error) {
-	c.Logger.Debug().Str("collection-name", coll.Name()).Msg("Ensuring collection exists")
 	exists, err := db.CollectionExists(ctx, coll.Name())
 	if err != nil {
 		c.Logger.Warn().Err(err).Msg("Failed to get if collection exists.")
