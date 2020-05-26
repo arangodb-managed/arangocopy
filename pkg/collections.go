@@ -23,7 +23,6 @@ package pkg
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/arangodb/go-driver"
@@ -58,7 +57,6 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	var g errgroup.Group
 	sem := semaphore.NewWeighted(int64(c.Parallel))
 	s := spinner.New(spinner.CharSets[34], 100*time.Millisecond)
-	fmt.Println()
 	s.Start()
 	for _, sourceColl := range collections {
 		sourceColl := sourceColl

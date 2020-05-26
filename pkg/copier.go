@@ -27,10 +27,9 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	"github.com/rs/zerolog"
-
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
+	"github.com/rs/zerolog"
 )
 
 var (
