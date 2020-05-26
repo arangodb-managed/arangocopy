@@ -23,6 +23,7 @@ package pkg
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/arangodb/go-driver"
@@ -35,22 +36,36 @@ import (
 // copyCollections copies all collections for a database.
 func (c *copier) copyCollections(ctx context.Context, db driver.Database) error {
 	log := c.Logger
-
-	sourceDB, err := c.sourceClient.Database(ctx, db.Name())
-	if err != nil {
-		return err
-	}
-	list, err := sourceDB.Collections(ctx)
-	if err != nil {
-		c.Logger.Error().Err(err).Msg("Failed to list collections for source database.")
-		return err
-	}
-	collections := c.filterCollections(list)
-	destinationDB, err := c.destinationClient.Database(ctx, sourceDB.Name())
-	if err != nil {
-		c.Logger.Error().Err(err).Msg("Failed to get destination database.")
+	var (
+		sourceDB      driver.Database
+		list          []driver.Collection
+		destinationDB driver.Database
+	)
+	if err := backoff.Retry(func() error {
+		sdb, err := c.sourceClient.Database(ctx, db.Name())
+		if err != nil {
+			return err
+		}
+		sourceDB = sdb
+		colls, err := sourceDB.Collections(ctx)
+		if err != nil {
+			c.Logger.Error().Err(err).Msg("Failed to list collections for source database.")
+			return err
+		}
+		list = colls
+		ddb, err := c.destinationClient.Database(ctx, sourceDB.Name())
+		if err != nil {
+			c.Logger.Error().Err(err).Msg("Failed to get destination database.")
+			return nil
+		}
+		destinationDB = ddb
 		return nil
+	}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+		c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
+		return err
 	}
+
+	collections := c.filterCollections(list)
 	readCtx := driver.WithQueryStream(ctx, true)
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
 	restoreCtx := driver.WithIsRestore(ctx, true)
@@ -65,18 +80,26 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				return err
 			}
 			defer sem.Release(1)
-			sourceProps, err := sourceColl.Properties(ctx)
-			if err != nil {
-				c.Logger.Error().Err(err).Msg("Failed to get properties.")
+			var props driver.CollectionProperties
+			if err := backoff.Retry(func() error {
+				sourceProps, err := sourceColl.Properties(ctx)
+				if err != nil {
+					c.Logger.Error().Err(err).Msg("Failed to get properties.")
+					return err
+				}
+				props = sourceProps
+				return nil
+			}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+				c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
 				return err
 			}
-			if sourceProps.IsSystem {
+			if props.IsSystem {
 				// skip system collections
 				return nil
 			}
 			var destinationColl driver.Collection
 			if err := backoff.Retry(func() error {
-				dColl, err := c.ensureDestinationCollection(ctx, destinationDB, sourceColl, sourceProps)
+				dColl, err := c.ensureDestinationCollection(ctx, destinationDB, sourceColl, props)
 				if err != nil {
 					c.Logger.Error().Err(err).Msg("Failed to ensure destination collection.")
 					return err
@@ -152,6 +175,82 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 
 // copyIndexes copies all indexes for a collection to destination collection.
 func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, destinationColl driver.Collection) error {
+	var indexes []driver.Index
+	if err := backoff.Retry(func() error {
+		idxs, err := sourceColl.Indexes(ctx)
+		if err != nil {
+			return err
+		}
+		indexes = idxs
+		return nil
+	}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+		c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Backoff eventually failed.")
+		return err
+	}
+	for _, index := range indexes {
+		if err := backoff.Retry(func() error {
+			switch index.Type() {
+			case driver.TTLIndex:
+				var field string
+				if len(index.Fields()) > 0 {
+					field = index.Fields()[0]
+				}
+				if _, _, err := destinationColl.EnsureTTLIndex(ctx, field, index.ExpireAfter(), &driver.EnsureTTLIndexOptions{
+					Name: index.UserName(),
+				}); err != nil {
+					return err
+				}
+			case driver.PersistentIndex:
+				if _, _, err := destinationColl.EnsurePersistentIndex(ctx, index.Fields(), &driver.EnsurePersistentIndexOptions{
+					Name:   index.UserName(),
+					Unique: index.Unique(),
+					Sparse: index.Sparse(),
+				}); err != nil {
+					return err
+				}
+			case driver.SkipListIndex:
+				if _, _, err := destinationColl.EnsureSkipListIndex(ctx, index.Fields(), &driver.EnsureSkipListIndexOptions{
+					Name:          index.UserName(),
+					Unique:        index.Unique(),
+					Sparse:        index.Sparse(),
+					NoDeduplicate: !index.Deduplicate(),
+				}); err != nil {
+					return err
+				}
+			case driver.HashIndex:
+				if _, _, err := destinationColl.EnsureHashIndex(ctx, index.Fields(), &driver.EnsureHashIndexOptions{
+					Name:          index.UserName(),
+					Unique:        index.Unique(),
+					Sparse:        index.Sparse(),
+					NoDeduplicate: !index.Deduplicate(),
+				}); err != nil {
+					return err
+				}
+			case driver.FullTextIndex:
+				if _, _, err := destinationColl.EnsureFullTextIndex(ctx, index.Fields(), &driver.EnsureFullTextIndexOptions{
+					Name:      index.UserName(),
+					MinLength: index.MinLength(),
+				}); err != nil {
+					return err
+				}
+			case driver.GeoIndex:
+				if _, _, err := destinationColl.EnsureGeoIndex(ctx, index.Fields(), &driver.EnsureGeoIndexOptions{
+					Name:    index.UserName(),
+					GeoJSON: index.GeoJSON(),
+				}); err != nil {
+					return err
+				}
+			case driver.EdgeIndex:
+			case driver.PrimaryIndex:
+			default:
+				return errors.New("unknown index type " + string(index.Type()))
+			}
+			return nil
+		}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+			c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Str("index", index.UserName()).Msg("Backoff eventually failed.")
+			return err
+		}
+	}
 	return nil
 }
 

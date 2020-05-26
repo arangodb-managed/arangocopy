@@ -31,39 +31,74 @@ import (
 // copyViews copies all views from source database to destination database.
 func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 	log := c.Logger
-	// Get the destination database
-	destinationDb, err := c.destinationClient.Database(ctx, db.Name())
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to get destination database")
+	var (
+		destinationDb driver.Database
+		sourceViews   []driver.View
+	)
+	if err := backoff.Retry(func() error {
+		// Get the destination database
+		destDB, err := c.destinationClient.Database(ctx, db.Name())
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to get destination database")
+			return err
+		}
+		destinationDb = destDB
+		views, err := db.Views(ctx)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to find all views.")
+			return err
+		}
+		sourceViews = views
+		return nil
+	}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+		c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
 		return err
 	}
-	sourceViews, err := db.Views(ctx)
+
 	views := c.filterViews(sourceViews)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to find all views.")
-		return err
-	}
 	for _, v := range views {
 		log = log.With().Str("view", v.Name()).Str("db", db.Name()).Logger()
 		// Check if view already exists
-		if ok, err := destinationDb.ViewExists(ctx, v.Name()); err != nil {
-			log.Error().Err(err).Msg("Error checking if view exists.")
+
+		var (
+			exists bool
+			props  driver.ArangoSearchViewProperties
+		)
+		if err := backoff.Retry(func() error {
+			if ok, err := destinationDb.ViewExists(ctx, v.Name()); err != nil {
+				log.Error().Err(err).Msg("Error checking if view exists.")
+				return err
+			} else {
+				exists = ok
+			}
+			return nil
+		}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+			c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
 			return err
-		} else if ok {
-			// skip if it exists
+		}
+
+		if exists {
 			continue
 		}
 
-		asv, err := v.ArangoSearchView()
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to get arango search view.")
+		if err := backoff.Retry(func() error {
+			asv, err := v.ArangoSearchView()
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to get arango search view.")
+				return err
+			}
+			propss, err := asv.Properties(ctx)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to get properties for view.")
+				return err
+			}
+			props = propss
+			return nil
+		}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+			c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
 			return err
 		}
-		props, err := asv.Properties(ctx)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to get properties for view.")
-			return err
-		}
+
 		if err := backoff.Retry(func() error {
 			// Create the view.
 			if _, err := destinationDb.CreateArangoSearchView(ctx, v.Name(), &props); err != nil {
