@@ -41,7 +41,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 		list          []driver.Collection
 		destinationDB driver.Database
 	)
-	if err := backoff.Retry(func() error {
+	c.backoffCall(ctx, func() error {
 		sdb, err := c.sourceClient.Database(ctx, db.Name())
 		if err != nil {
 			return err
@@ -60,10 +60,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 		}
 		destinationDB = ddb
 		return nil
-	}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-		c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
-		return err
-	}
+	})
 
 	collections := c.filterCollections(list)
 	readCtx := driver.WithQueryStream(ctx, true)
@@ -81,7 +78,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			}
 			defer sem.Release(1)
 			var props driver.CollectionProperties
-			if err := backoff.Retry(func() error {
+			c.backoffCall(ctx, func() error {
 				sourceProps, err := sourceColl.Properties(ctx)
 				if err != nil {
 					c.Logger.Error().Err(err).Msg("Failed to get properties.")
@@ -89,16 +86,13 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				}
 				props = sourceProps
 				return nil
-			}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-				c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
-				return err
-			}
+			})
 			if props.IsSystem {
 				// skip system collections
 				return nil
 			}
 			var destinationColl driver.Collection
-			if err := backoff.Retry(func() error {
+			c.backoffCall(ctx, func() error {
 				dColl, err := c.ensureDestinationCollection(ctx, destinationDB, sourceColl, props)
 				if err != nil {
 					c.Logger.Error().Err(err).Msg("Failed to ensure destination collection.")
@@ -106,15 +100,12 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				}
 				destinationColl = dColl
 				return nil
-			}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-				c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
-				return err
-			}
+			})
 			bindVars := map[string]interface{}{
 				"@c": sourceColl.Name(),
 			}
 			var cursor driver.Cursor
-			if err := backoff.Retry(func() error {
+			c.backoffCall(ctx, func() error {
 				cr, err := sourceDB.Query(readCtx, "FOR d IN @@c RETURN d", bindVars)
 				if err != nil {
 					c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Failed to query source database for collection.")
@@ -122,10 +113,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				}
 				cursor = cr
 				return nil
-			}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-				c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
-				return err
-			}
+			})
 			batch := make([]interface{}, c.BatchSize)
 			for {
 				var d interface{}
@@ -184,19 +172,16 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 // copyIndexes copies all indexes for a collection to destination collection.
 func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, destinationColl driver.Collection) error {
 	var indexes []driver.Index
-	if err := backoff.Retry(func() error {
+	c.backoffCall(ctx, func() error {
 		idxs, err := sourceColl.Indexes(ctx)
 		if err != nil {
 			return err
 		}
 		indexes = idxs
 		return nil
-	}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-		c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Backoff eventually failed.")
-		return err
-	}
+	})
 	for _, index := range indexes {
-		if err := backoff.Retry(func() error {
+		c.backoffCall(ctx, func() error {
 			switch index.Type() {
 			case driver.TTLIndex:
 				var field string
@@ -254,10 +239,7 @@ func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, 
 				return errors.New("unknown index type " + string(index.Type()))
 			}
 			return nil
-		}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-			c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Str("index", index.UserName()).Msg("Backoff eventually failed.")
-			return err
-		}
+		})
 	}
 	return nil
 }

@@ -25,7 +25,6 @@ import (
 	"context"
 
 	"github.com/arangodb/go-driver"
-	"github.com/cenkalti/backoff"
 )
 
 // copyViews copies all views from source database to destination database.
@@ -35,7 +34,7 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 		destinationDb driver.Database
 		sourceViews   []driver.View
 	)
-	if err := backoff.Retry(func() error {
+	c.backoffCall(ctx, func() error {
 		// Get the destination database
 		destDB, err := c.destinationClient.Database(ctx, db.Name())
 		if err != nil {
@@ -50,10 +49,7 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 		}
 		sourceViews = views
 		return nil
-	}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-		c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
-		return err
-	}
+	})
 
 	views := c.filterViews(sourceViews)
 	for _, v := range views {
@@ -64,7 +60,7 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 			exists bool
 			props  driver.ArangoSearchViewProperties
 		)
-		if err := backoff.Retry(func() error {
+		c.backoffCall(ctx, func() error {
 			if ok, err := destinationDb.ViewExists(ctx, v.Name()); err != nil {
 				log.Error().Err(err).Msg("Error checking if view exists.")
 				return err
@@ -72,16 +68,13 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 				exists = ok
 			}
 			return nil
-		}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-			c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
-			return err
-		}
+		})
 
 		if exists {
 			continue
 		}
 
-		if err := backoff.Retry(func() error {
+		c.backoffCall(ctx, func() error {
 			asv, err := v.ArangoSearchView()
 			if err != nil {
 				log.Error().Err(err).Msg("Failed to get arango search view.")
@@ -94,22 +87,16 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 			}
 			props = propss
 			return nil
-		}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-			c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
-			return err
-		}
+		})
 
-		if err := backoff.Retry(func() error {
+		c.backoffCall(ctx, func() error {
 			// Create the view.
 			if _, err := destinationDb.CreateArangoSearchView(ctx, v.Name(), &props); err != nil {
 				log.Error().Err(err).Msg("Failed to create arango search view in destination db.")
 				return err
 			}
 			return nil
-		}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-			c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
-			return err
-		}
+		})
 	}
 	return nil
 }

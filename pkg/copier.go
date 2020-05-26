@@ -27,6 +27,8 @@ import (
 	"crypto/tls"
 	"fmt"
 
+	"github.com/cenkalti/backoff"
+
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
 	"github.com/rs/zerolog"
@@ -197,4 +199,11 @@ func (c *copier) Copy() error {
 	}
 
 	return nil
+}
+
+// backoffCall is a convenient wrapper around backoff Retry.
+func (c *copier) backoffCall(ctx context.Context, f func() error) {
+	if err := backoff.Retry(f, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+		c.Logger.Fatal().Err(err).Msg("Backoff eventually failed.")
+	}
 }

@@ -26,20 +26,16 @@ import (
 	"context"
 
 	"github.com/arangodb/go-driver"
-	"github.com/cenkalti/backoff"
 )
 
 // copyDatabase creates a database at the destination.
 func (c *copier) copyDatabase(ctx context.Context, db driver.Database) error {
-	if err := backoff.Retry(func() error {
+	c.backoffCall(ctx, func() error {
 		if err := c.ensureDestinationDatabase(ctx, db.Name()); err != nil {
 			return err
 		}
 		return nil
-	}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-		c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
-		return err
-	}
+	})
 	return nil
 }
 
