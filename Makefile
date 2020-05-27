@@ -27,7 +27,6 @@ test:
 	go tool cover -html=bin/test/coverage.out -o bin/test/coverage.html
 
 bootstrap:
-	go get github.com/arangodb-managed/zutano
 	go get github.com/mitchellh/gox
 	go get github.com/jstemmer/go-junit-report
 	go get github.com/arangodb/go-driver

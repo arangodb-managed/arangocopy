@@ -24,11 +24,8 @@ package pkg
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/arangodb/go-driver"
-	"github.com/briandowns/spinner"
-	"github.com/cenkalti/backoff"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 )
@@ -36,23 +33,34 @@ import (
 // copyCollections copies all collections for a database.
 func (c *copier) copyCollections(ctx context.Context, db driver.Database) error {
 	log := c.Logger
+	log.Info().Msg("Beginning to copy over collection data.")
 	var (
 		sourceDB      driver.Database
-		list          []driver.Collection
+		collections   []driver.Collection
 		destinationDB driver.Database
 	)
-	c.backoffCall(ctx, func() error {
+	if err := c.backoffCall(ctx, func() error {
 		sdb, err := c.sourceClient.Database(ctx, db.Name())
 		if err != nil {
 			return err
 		}
 		sourceDB = sdb
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := c.backoffCall(ctx, func() error {
 		colls, err := sourceDB.Collections(ctx)
 		if err != nil {
 			c.Logger.Error().Err(err).Msg("Failed to list collections for source database.")
 			return err
 		}
-		list = colls
+		collections = colls
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := c.backoffCall(ctx, func() error {
 		ddb, err := c.destinationClient.Database(ctx, sourceDB.Name())
 		if err != nil {
 			c.Logger.Error().Err(err).Msg("Failed to get destination database.")
@@ -60,16 +68,19 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 		}
 		destinationDB = ddb
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
 
-	collections := c.filterCollections(list)
+	c.filterCollections(collections)
 	readCtx := driver.WithQueryStream(ctx, true)
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
 	restoreCtx := driver.WithIsRestore(ctx, true)
 	var g errgroup.Group
 	sem := semaphore.NewWeighted(int64(c.Parallel))
-	s := spinner.New(spinner.CharSets[34], 100*time.Millisecond)
-	s.Start()
+	if c.Dependencies.Spinner != nil {
+		c.Dependencies.Spinner.Start()
+	}
 	for _, sourceColl := range collections {
 		sourceColl := sourceColl
 		g.Go(func() error {
@@ -78,7 +89,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			}
 			defer sem.Release(1)
 			var props driver.CollectionProperties
-			c.backoffCall(ctx, func() error {
+			if err := c.backoffCall(ctx, func() error {
 				sourceProps, err := sourceColl.Properties(ctx)
 				if err != nil {
 					c.Logger.Error().Err(err).Msg("Failed to get properties.")
@@ -86,13 +97,15 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				}
 				props = sourceProps
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
 			if props.IsSystem {
 				// skip system collections
 				return nil
 			}
 			var destinationColl driver.Collection
-			c.backoffCall(ctx, func() error {
+			if err := c.backoffCall(ctx, func() error {
 				dColl, err := c.ensureDestinationCollection(ctx, destinationDB, sourceColl, props)
 				if err != nil {
 					c.Logger.Error().Err(err).Msg("Failed to ensure destination collection.")
@@ -100,56 +113,9 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				}
 				destinationColl = dColl
 				return nil
-			})
-			bindVars := map[string]interface{}{
-				"@c": sourceColl.Name(),
+			}); err != nil {
+				return err
 			}
-			var cursor driver.Cursor
-			c.backoffCall(ctx, func() error {
-				cr, err := sourceDB.Query(readCtx, "FOR d IN @@c RETURN d", bindVars)
-				if err != nil {
-					c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Failed to query source database for collection.")
-					return err
-				}
-				cursor = cr
-				return nil
-			})
-			batch := make([]interface{}, 0, c.BatchSize)
-			for {
-				var d interface{}
-				if err := backoff.Retry(func() error {
-					if _, err := cursor.ReadDocument(readCtx, &d); err != nil {
-						c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Read documents failed.")
-						return err
-					}
-					batch = append(batch, d)
-					return nil
-				}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-					c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Backoff eventually failed.")
-					cursor.Close()
-					return err
-				}
-
-				if (!cursor.HasMore() && len(batch) > 0) || len(batch) >= c.BatchSize {
-					if err := backoff.Retry(func() error {
-						if _, _, err := destinationColl.CreateDocuments(restoreCtx, batch); err != nil {
-							c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Interface("document", d).Msg("Creating a document failed.")
-							return err
-						}
-						batch = make([]interface{}, 0, c.BatchSize)
-						return nil
-					}, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-						c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Backoff eventually failed.")
-						cursor.Close()
-						return err
-					}
-				}
-
-				if !cursor.HasMore() {
-					break
-				}
-			}
-			cursor.Close()
 
 			// Copy over all indexes for this collection.
 			if err := c.copyIndexes(restoreCtx, sourceColl, destinationColl); err != nil {
@@ -157,6 +123,59 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				return err
 			}
 
+			bindVars := map[string]interface{}{
+				"@c": sourceColl.Name(),
+			}
+			var cursor driver.Cursor
+			if err := c.backoffCall(ctx, func() error {
+				cr, err := sourceDB.Query(readCtx, "FOR d IN @@c RETURN d", bindVars)
+				if err != nil {
+					c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Failed to query source database for collection.")
+					return err
+				}
+				cursor = cr
+				return nil
+			}); err != nil {
+				return err
+			}
+			defer cursor.Close()
+			batch := make([]interface{}, 0, c.BatchSize)
+			for {
+				var (
+					d           interface{}
+					noMoreError bool
+				)
+				if err := c.backoffCall(ctx, func() error {
+					if _, err := cursor.ReadDocument(readCtx, &d); driver.IsNoMoreDocuments(err) {
+						noMoreError = true
+						return nil
+					} else if err != nil {
+						c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Read documents failed.")
+						return err
+					}
+					batch = append(batch, d)
+					return nil
+				}); err != nil {
+					return err
+				}
+
+				if (noMoreError && len(batch) > 0) || len(batch) >= c.BatchSize {
+					if err := c.backoffCall(ctx, func() error {
+						if _, _, err := destinationColl.CreateDocuments(restoreCtx, batch); err != nil {
+							c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Interface("document", d).Msg("Creating a document failed.")
+							return err
+						}
+						batch = make([]interface{}, 0, c.BatchSize)
+						return nil
+					}); err != nil {
+						return err
+					}
+				}
+
+				if noMoreError {
+					break
+				}
+			}
 			return nil
 		})
 	}
@@ -164,7 +183,9 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 		log.Error().Err(err).Msg("One of the workers failed to copy data.")
 		return err
 	}
-	s.Stop()
+	if c.Dependencies.Spinner != nil {
+		c.Dependencies.Spinner.Stop()
+	}
 	log.Debug().Str("source-database", sourceDB.Name()).Msg("Done copying database data.")
 	return nil
 }
@@ -172,16 +193,18 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 // copyIndexes copies all indexes for a collection to destination collection.
 func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, destinationColl driver.Collection) error {
 	var indexes []driver.Index
-	c.backoffCall(ctx, func() error {
+	if err := c.backoffCall(ctx, func() error {
 		idxs, err := sourceColl.Indexes(ctx)
 		if err != nil {
 			return err
 		}
 		indexes = idxs
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
 	for _, index := range indexes {
-		c.backoffCall(ctx, func() error {
+		if err := c.backoffCall(ctx, func() error {
 			switch index.Type() {
 			case driver.TTLIndex:
 				var field string
@@ -239,7 +262,9 @@ func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, 
 				return errors.New("unknown index type " + string(index.Type()))
 			}
 			return nil
-		})
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

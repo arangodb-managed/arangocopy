@@ -30,13 +30,12 @@ import (
 
 // copyDatabase creates a database at the destination.
 func (c *copier) copyDatabase(ctx context.Context, db driver.Database) error {
-	c.backoffCall(ctx, func() error {
+	return c.backoffCall(ctx, func() error {
 		if err := c.ensureDestinationDatabase(ctx, db.Name()); err != nil {
 			return err
 		}
 		return nil
 	})
-	return nil
 }
 
 // ensureDestinationDatabase ensures that a database exists at the destination.

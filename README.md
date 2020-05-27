@@ -33,6 +33,16 @@ make
 arangocopy [command...]
 ```
 
+Example copy from local docker image into an Oasis deployed database.
+
+```bash
+arangocopy copy --source-address tcp://localhost:8529 \
+                --destination-address https://094c6fa1709c.arangodb.cloud:8529/ \
+                --destination-username root \
+                --destination-password password1234 \ 
+                --batch-size 10000
+```
+
 A list of commands and options can be shown using:
 
 ```bash

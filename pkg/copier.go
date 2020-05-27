@@ -25,9 +25,15 @@ package pkg
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"os"
+	"time"
 
+	"github.com/briandowns/spinner"
 	"github.com/cenkalti/backoff"
+	"github.com/rs/zerolog/log"
+	"golang.org/x/crypto/ssh/terminal"
 
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
@@ -45,29 +51,43 @@ type Copier interface {
 	Copy() error
 }
 
+// Connection encapsulates connection details for a database.
+type Connection struct {
+	Address  string
+	Username string
+	Password string
+}
+
 // Config defines configuration for this copier.
 type Config struct {
-	SourceAddress       string
-	SourceUsername      string
-	SourcePassword      string
-	DestinationAddress  string
-	DestinationUsername string
-	DestinationPassword string
-	IncludedDatabases   []string
-	ExcludedDatabases   []string
+	// Source database connection details
+	Source Connection
+	// Destination database connection details
+	Destination Connection
+	// A list of database names to be included in the copy operation. If define, only these names will be selected.
+	IncludedDatabases []string
+	// A list of database names to be excluded from the copy operation.
+	ExcludedDatabases []string
+	// A list of collection names to be included in the copy operation. If define, only these names will be selected.
 	IncludedCollections []string
+	// A list of collection names to be excluded from the copy operation.
 	ExcludedCollections []string
-	IncludedViews       []string
-	ExcludedViews       []string
-	Force               bool
-	Parallel            int
-	Timeout             float64
-	BatchSize           int
+	// A list of view names to be included in the copy operation. If define, only these names will be selected.
+	IncludedViews []string
+	// A list of view names to be excluded from the copy operation.
+	ExcludedViews []string
+	// Forces the copy operation ignoring the confirm dialog.
+	Force bool
+	// Number of parallel collection copies underway.
+	Parallel int
+	// The batch size of the cursor.
+	BatchSize int
 }
 
 // Dependencies defines dependencies for the copier.
 type Dependencies struct {
-	Logger zerolog.Logger
+	Logger  zerolog.Logger
+	Spinner *spinner.Spinner
 }
 
 type copier struct {
@@ -90,19 +110,24 @@ func NewCopier(cfg Config, deps Dependencies) (Copier, error) {
 		Dependencies: deps,
 	}
 	// Set up source client.
-	if client, err := c.getClient("Source", cfg.SourceAddress, cfg.SourceUsername, cfg.SourcePassword); err != nil {
+	if client, err := c.getClient("Source", cfg.Source.Address, cfg.Source.Username, cfg.Source.Password); err != nil {
 		c.Logger.Error().Err(err).Msg("Failed to connect to source address.")
 		return nil, err
 	} else {
 		c.sourceClient = client
 	}
 	// Set up destination client.
-	if client, err := c.getClient("Destination", cfg.DestinationAddress, cfg.DestinationUsername, cfg.DestinationPassword); err != nil {
+	if client, err := c.getClient("Destination", cfg.Destination.Address, cfg.Destination.Username, cfg.Destination.Password); err != nil {
 		c.Logger.Error().Err(err).Msg("Failed to connect to destination address.")
 		return nil, err
 	} else {
 		c.destinationClient = client
 	}
+	// Set up spinner
+	if terminal.IsTerminal(int(os.Stdout.Fd())) {
+		c.Dependencies.Spinner = spinner.New(spinner.CharSets[34], 100*time.Millisecond)
+	}
+
 	// Set up filters
 	c.databaseInclude = setupMap(c.Config.IncludedDatabases)
 	c.databaseExclude = setupMap(c.Config.ExcludedDatabases)
@@ -161,32 +186,31 @@ func (c *copier) getClient(prefix, address, username, password string) (driver.C
 func (c *copier) Copy() error {
 	log := c.Logger
 
-	if !c.Force {
-		var response string
-		fmt.Print("Please confirm copy operation (y/N) ")
-		fmt.Scanln(&response)
-		if response != "y" {
-			log.Info().Msg("Halting operation.")
-			return nil
-		}
-	} else {
-		log.Info().Msg("Force is being used, confirm skipped.")
+	ok, err := c.displayConfirmation()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		log.Info().Msg("Cancelling operation.")
+		return nil
 	}
 
 	ctx := context.Background()
 	// Gather all databases
-	var sourceDbs []driver.Database
-	c.backoffCall(ctx, func() error {
+	var databases []driver.Database
+	if err := c.backoffCall(ctx, func() error {
 		dbs, err := c.sourceClient.Databases(ctx)
 		if err != nil {
 			c.Logger.Error().Err(err).Msg("Failed to get databases for source.")
 			return err
 		}
-		sourceDbs = dbs
+		databases = dbs
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
 
-	databases := c.filterDatabases(sourceDbs)
+	c.filterDatabases(databases)
 
 	for _, db := range databases {
 		if err := c.copyDatabase(ctx, db); err != nil {
@@ -206,9 +230,31 @@ func (c *copier) Copy() error {
 	return nil
 }
 
-// backoffCall is a convenient wrapper around backoff Retry.
-func (c *copier) backoffCall(ctx context.Context, f func() error) {
-	if err := backoff.Retry(f, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
-		c.Logger.Fatal().Err(err).Msg("Backoff eventually failed.")
+// displayConfirmation will only display the confirm question if the terminal is an interactive one.
+// otherwise, will fail.
+func (c *copier) displayConfirmation() (bool, error) {
+	if terminal.IsTerminal(int(os.Stdout.Fd())) {
+		if !c.Force {
+			var response string
+			fmt.Print("Please confirm copy operation (y/N) ")
+			fmt.Scanln(&response)
+			if response != "y" {
+				log.Info().Msg("Halting operation.")
+				return false, nil
+			}
+		} else {
+			log.Info().Msg("Force is being used, confirm skipped.")
+		}
+		return true, nil
 	}
+	return false, errors.New("either use an interactive terminal or define --force flag")
+}
+
+// backoffCall is a convenient wrapper around backoff Retry.
+func (c *copier) backoffCall(ctx context.Context, f func() error) error {
+	if err := backoff.Retry(f, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+		c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
+		return err
+	}
+	return nil
 }

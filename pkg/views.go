@@ -32,9 +32,9 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 	log := c.Logger
 	var (
 		destinationDb driver.Database
-		sourceViews   []driver.View
+		views         []driver.View
 	)
-	c.backoffCall(ctx, func() error {
+	if err := c.backoffCall(ctx, func() error {
 		// Get the destination database
 		destDB, err := c.destinationClient.Database(ctx, db.Name())
 		if err != nil {
@@ -42,16 +42,24 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 			return err
 		}
 		destinationDb = destDB
-		views, err := db.Views(ctx)
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	if err := c.backoffCall(ctx, func() error {
+		vs, err := db.Views(ctx)
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to find all views.")
 			return err
 		}
-		sourceViews = views
+		views = vs
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
 
-	views := c.filterViews(sourceViews)
+	c.filterViews(views)
 	for _, v := range views {
 		log = log.With().Str("view", v.Name()).Str("db", db.Name()).Logger()
 		// Check if view already exists
@@ -60,7 +68,7 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 			exists bool
 			props  driver.ArangoSearchViewProperties
 		)
-		c.backoffCall(ctx, func() error {
+		if err := c.backoffCall(ctx, func() error {
 			if ok, err := destinationDb.ViewExists(ctx, v.Name()); err != nil {
 				log.Error().Err(err).Msg("Error checking if view exists.")
 				return err
@@ -68,13 +76,15 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 				exists = ok
 			}
 			return nil
-		})
+		}); err != nil {
+			return err
+		}
 
 		if exists {
 			continue
 		}
 
-		c.backoffCall(ctx, func() error {
+		if err := c.backoffCall(ctx, func() error {
 			asv, err := v.ArangoSearchView()
 			if err != nil {
 				log.Error().Err(err).Msg("Failed to get arango search view.")
@@ -87,16 +97,20 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 			}
 			props = propss
 			return nil
-		})
+		}); err != nil {
+			return err
+		}
 
-		c.backoffCall(ctx, func() error {
+		if err := c.backoffCall(ctx, func() error {
 			// Create the view.
 			if _, err := destinationDb.CreateArangoSearchView(ctx, v.Name(), &props); err != nil {
 				log.Error().Err(err).Msg("Failed to create arango search view in destination db.")
 				return err
 			}
 			return nil
-		})
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

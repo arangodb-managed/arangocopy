@@ -38,12 +38,8 @@ func init() {
 		},
 		func(c *cobra.Command, f *flag.FlagSet) {
 			cargs := &struct {
-				sourceAddress          string
-				sourceUsername         string
-				sourcePassword         string
-				destinationAddress     string
-				destinationUsername    string
-				destinationPassword    string
+				source                 pkg.Connection
+				destination            pkg.Connection
 				includedDatabases      []string
 				excludedDatabases      []string
 				includedCollections    []string
@@ -52,39 +48,33 @@ func init() {
 				excludedViews          []string
 				force                  bool
 				maxParallelCollections int
-				timeout                float64
 				batchSize              int
 			}{}
-			f.StringVarP(&cargs.sourceAddress, "source-address", "s", "", "Source database address to copy data from.")
-			f.StringVar(&cargs.sourceUsername, "source-username", "", "Source database username if required.")
-			f.StringVar(&cargs.sourcePassword, "source-password", "", "Source database password if required.")
-			f.StringVarP(&cargs.destinationAddress, "destination-address", "d", "", "Destination database address to copy data to.")
-			f.StringVar(&cargs.destinationUsername, "destination-username", "", "Destination database username if required.")
-			f.StringVar(&cargs.destinationPassword, "destination-password", "", "Destination database password if required.")
+			f.StringVarP(&cargs.source.Address, "source-address", "s", "", "Source database address to copy data from.")
+			f.StringVar(&cargs.source.Username, "source-username", "", "Source database username if required.")
+			f.StringVar(&cargs.source.Password, "source-password", "", "Source database password if required.")
+			f.StringVarP(&cargs.destination.Address, "destination-address", "d", "", "Destination database address to copy data to.")
+			f.StringVar(&cargs.destination.Username, "destination-username", "", "Destination database username if required.")
+			f.StringVar(&cargs.destination.Password, "destination-password", "", "Destination database password if required.")
 			f.IntVarP(&cargs.maxParallelCollections, "maximum-parallel-collections", "m", 5, "Maximum number of collections being read out of in parallel.")
-			f.StringSliceVar(&cargs.includedDatabases, "included-databases", []string{}, "A list of database names which should be included. If provided, only these databases will be copied.")
-			f.StringSliceVar(&cargs.includedCollections, "included-collections", []string{}, "A list of collection names which should be included. If provided, only these collections will be copied.")
-			f.StringSliceVar(&cargs.includedViews, "included-views", []string{}, "A list of view names which should be included. If provided, only these views will be copied.")
-			f.StringSliceVar(&cargs.excludedDatabases, "exluded-databases", []string{}, "A list of database names which should be excluded. Exclusion takes priority over inclusion.")
-			f.StringSliceVar(&cargs.excludedCollections, "excluded-collections", []string{}, "A list of collections names which should be excluded. Exclusion takes priority over inclusion.")
-			f.StringSliceVar(&cargs.excludedViews, "excluded-views", []string{}, "A list of view names which should be excluded. Exclusion takes priority over inclusion.")
+			f.StringSliceVar(&cargs.includedDatabases, "included-database", []string{}, "A list of database names which should be included. If provided, only these databases will be copied.")
+			f.StringSliceVar(&cargs.excludedDatabases, "exluded-database", []string{}, "A list of database names which should be excluded. Exclusion takes priority over inclusion.")
+			f.StringSliceVar(&cargs.includedCollections, "included-collection", []string{}, "A list of collection names which should be included. If provided, only these collections will be copied.")
+			f.StringSliceVar(&cargs.excludedCollections, "excluded-collection", []string{}, "A list of collections names which should be excluded. Exclusion takes priority over inclusion.")
+			f.StringSliceVar(&cargs.includedViews, "included-view", []string{}, "A list of view names which should be included. If provided, only these views will be copied.")
+			f.StringSliceVar(&cargs.excludedViews, "excluded-view", []string{}, "A list of view names which should be excluded. Exclusion takes priority over inclusion.")
 			f.BoolVarP(&cargs.force, "force", "f", false, "Force the copy automatically overwriting everything at destination.")
-			f.Float64VarP(&cargs.timeout, "timeout", "t", 30, "Timeout in seconds for all queries. Value of 0 means no timeout. Allows for fractions.")
 			f.IntVarP(&cargs.batchSize, "batch-size", "b", 4096, "The number of documents to write at once.")
 
 			c.Run = func(c *cobra.Command, args []string) {
 				// Validate arguments
 				log := CLILog
-				sourceAddress, argsUsed := ReqOption("source-address", cargs.sourceAddress, args, 0)
-				destinationAddress, argsUsed := ReqOption("destination-address", cargs.destinationAddress, args, 1)
+				_, argsUsed := ReqOption("source-address", cargs.source.Address, args, 0)
+				_, argsUsed = ReqOption("destination-address", cargs.destination.Address, args, 1)
 				MustCheckNumberOfArgs(args, argsUsed)
 				copier, err := pkg.NewCopier(pkg.Config{
-					SourceAddress:       sourceAddress,
-					SourceUsername:      cargs.sourceUsername,
-					SourcePassword:      cargs.sourcePassword,
-					DestinationAddress:  destinationAddress,
-					DestinationUsername: cargs.destinationUsername,
-					DestinationPassword: cargs.destinationPassword,
+					Source:              cargs.source,
+					Destination:         cargs.destination,
 					IncludedDatabases:   cargs.includedDatabases,
 					IncludedCollections: cargs.includedCollections,
 					IncludedViews:       cargs.includedViews,
@@ -93,7 +83,6 @@ func init() {
 					ExcludedViews:       cargs.excludedViews,
 					Force:               cargs.force,
 					Parallel:            cargs.maxParallelCollections,
-					Timeout:             cargs.timeout,
 					BatchSize:           cargs.batchSize,
 				}, pkg.Dependencies{
 					Logger: CLILog,
