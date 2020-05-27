@@ -26,32 +26,50 @@ import "github.com/arangodb/go-driver"
 
 // filterDatabases takes a list of databases and filters it according to the set up
 // included and excluded filters.
-func (c *copier) filterDatabases(items []driver.Database) {
-	for i := 0; i < len(items); i++ {
-		if ok := isIncluded(items[i].Name(), c.databaseInclude, c.databaseExclude); !ok {
-			items = append(items[:i], items[i+1:]...)
+func (c *copier) filterDatabases(items []driver.Database) []driver.Database {
+	ret := make([]driver.Database, 0)
+	for _, item := range items {
+		if ok := isIncluded(item.Name(), c.graphInclude, c.graphExclude); ok {
+			ret = append(ret, item)
 		}
 	}
+	return ret
 }
 
 // filterCollections takes a list of collections and filters it according to the set up
 // included and excluded filters.
-func (c *copier) filterCollections(items []driver.Collection) {
-	for i := 0; i < len(items); i++ {
-		if ok := isIncluded(items[i].Name(), c.collectionInclude, c.collectionExclude); !ok {
-			items = append(items[:i], items[i+1:]...)
+func (c *copier) filterCollections(items []driver.Collection) []driver.Collection {
+	ret := make([]driver.Collection, 0)
+	for _, item := range items {
+		if ok := isIncluded(item.Name(), c.graphInclude, c.graphExclude); ok {
+			ret = append(ret, item)
 		}
 	}
+	return ret
 }
 
 // filterViews takes a list of views and filters it according to the set up
 // included and excluded filters.
-func (c *copier) filterViews(items []driver.View) {
-	for i := 0; i < len(items); i++ {
-		if ok := isIncluded(items[i].Name(), c.viewInclude, c.viewExclude); !ok {
-			items = append(items[:i], items[i+1:]...)
+func (c *copier) filterViews(items []driver.View) []driver.View {
+	ret := make([]driver.View, 0)
+	for _, item := range items {
+		if ok := isIncluded(item.Name(), c.graphInclude, c.graphExclude); ok {
+			ret = append(ret, item)
 		}
 	}
+	return ret
+}
+
+// filterGraphs takes a list of graphs and filters it according to the set up
+// included and excluded filters.
+func (c *copier) filterGraphs(items []driver.Graph) []driver.Graph {
+	ret := make([]driver.Graph, 0)
+	for _, item := range items {
+		if ok := isIncluded(item.Name(), c.graphInclude, c.graphExclude); ok {
+			ret = append(ret, item)
+		}
+	}
+	return ret
 }
 
 // isIncluded will decide if an item with a given name should be included or excluded. This can be extended to do

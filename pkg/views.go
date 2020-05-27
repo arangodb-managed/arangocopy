@@ -60,7 +60,7 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 		return err
 	}
 
-	c.filterViews(views)
+	views = c.filterViews(views)
 	for _, v := range views {
 		log = log.With().Str("view", v.Name()).Str("db", db.Name()).Logger()
 		// Check if view already exists

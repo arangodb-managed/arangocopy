@@ -54,6 +54,8 @@ var (
 		excludedCollections    []string
 		includedViews          []string
 		excludedViews          []string
+		includedGraphs         []string
+		excludedGraphs         []string
 		force                  bool
 		maxParallelCollections int
 		batchSize              int
@@ -76,6 +78,8 @@ func init() {
 	f.StringSliceVar(&RootArgs.excludedCollections, "excluded-collection", []string{}, "A list of collections names which should be excluded. Exclusion takes priority over inclusion.")
 	f.StringSliceVar(&RootArgs.includedViews, "included-view", []string{}, "A list of view names which should be included. If provided, only these views will be copied.")
 	f.StringSliceVar(&RootArgs.excludedViews, "excluded-view", []string{}, "A list of view names which should be excluded. Exclusion takes priority over inclusion.")
+	f.StringSliceVar(&RootArgs.includedGraphs, "included-graph", []string{}, "A list of graph names which should be included. If provided, only these graphs will be copied.")
+	f.StringSliceVar(&RootArgs.excludedGraphs, "excluded-graph", []string{}, "A list of graph names which should be excluded. Exclusion takes priority over inclusion.")
 	f.BoolVarP(&RootArgs.force, "force", "f", false, "Force the copy automatically overwriting everything at destination.")
 	f.IntVarP(&RootArgs.batchSize, "batch-size", "b", 4096, "The number of documents to write at once.")
 	f.IntVarP(&RootArgs.maxRetries, "max-retries", "r", 11, "The number of maximum retries attempts. Increasing this number will also increase the exponential fallback timer.")
@@ -92,11 +96,13 @@ func run(cmd *cobra.Command, args []string) {
 		Source:              RootArgs.source,
 		Destination:         RootArgs.destination,
 		IncludedDatabases:   RootArgs.includedDatabases,
-		IncludedCollections: RootArgs.includedCollections,
-		IncludedViews:       RootArgs.includedViews,
 		ExcludedDatabases:   RootArgs.excludedDatabases,
+		IncludedCollections: RootArgs.includedCollections,
 		ExcludedCollections: RootArgs.excludedCollections,
+		IncludedViews:       RootArgs.includedViews,
 		ExcludedViews:       RootArgs.excludedViews,
+		IncludedGraphs:      RootArgs.includedGraphs,
+		ExcludedGraphs:      RootArgs.excludedGraphs,
 		Force:               RootArgs.force,
 		Parallel:            RootArgs.maxParallelCollections,
 		BatchSize:           RootArgs.batchSize,

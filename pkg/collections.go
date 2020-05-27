@@ -72,7 +72,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 		return err
 	}
 
-	c.filterCollections(collections)
+	collections = c.filterCollections(collections)
 	readCtx := driver.WithQueryStream(ctx, true)
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
 	restoreCtx := driver.WithIsRestore(ctx, true)

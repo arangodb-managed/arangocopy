@@ -57,6 +57,7 @@ func (c *copier) copyGraphs(ctx context.Context, source driver.Database) error {
 	}); err != nil {
 		return err
 	}
+	graphs = c.filterGraphs(graphs)
 
 	// Get the replication factor of the target system.
 	var destinationReplicationFactor int

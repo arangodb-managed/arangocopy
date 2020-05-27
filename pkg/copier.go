@@ -71,12 +71,17 @@ type Config struct {
 	IncludedViews []string
 	// A list of view names to be excluded from the copy operation.
 	ExcludedViews []string
+	// A list of graph names to be included in the copy operation. If define, only these names will be selected.
+	IncludedGraphs []string
+	// A list of graph names to be excluded from the copy operation.
+	ExcludedGraphs []string
 	// Forces the copy operation ignoring the confirm dialog.
 	Force bool
 	// Number of parallel collection copies underway.
 	Parallel int
 	// The batch size of the cursor.
-	BatchSize  int
+	BatchSize int
+	// MaxRetries defines the number of retries the backoff will do.
 	MaxRetries int
 }
 
@@ -97,6 +102,8 @@ type copier struct {
 	collectionExclude map[string]struct{}
 	viewInclude       map[string]struct{}
 	viewExclude       map[string]struct{}
+	graphInclude      map[string]struct{}
+	graphExclude      map[string]struct{}
 }
 
 // NewCopier returns a new copier with given a given set of configurations.
@@ -131,6 +138,8 @@ func NewCopier(cfg Config, deps Dependencies) (Copier, error) {
 	c.collectionExclude = setupMap(c.Config.ExcludedCollections)
 	c.viewInclude = setupMap(c.Config.IncludedViews)
 	c.viewExclude = setupMap(c.Config.ExcludedViews)
+	c.graphInclude = setupMap(c.Config.IncludedGraphs)
+	c.graphExclude = setupMap(c.Config.ExcludedGraphs)
 	return c, nil
 }
 
@@ -206,7 +215,7 @@ func (c *copier) Copy() error {
 		return err
 	}
 
-	c.filterDatabases(databases)
+	databases = c.filterDatabases(databases)
 
 	for _, db := range databases {
 		if err := c.copyDatabase(ctx, db); err != nil {
