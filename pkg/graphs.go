@@ -26,11 +26,11 @@ import (
 	"context"
 
 	"github.com/arangodb/go-driver"
-	"github.com/rs/zerolog/log"
 )
 
 // copyGraphs copies all graphs from source database to destination database.
 func (c *copier) copyGraphs(ctx context.Context, source driver.Database) error {
+	log := c.Logger
 	ctx = driver.WithIsRestore(ctx, true)
 	var destination driver.Database
 	if err := c.backoffCall(ctx, func() error {
@@ -50,6 +50,7 @@ func (c *copier) copyGraphs(ctx context.Context, source driver.Database) error {
 	if err := c.backoffCall(ctx, func() error {
 		gs, err := source.Graphs(ctx)
 		if err != nil {
+			log.Error().Err(err).Msg("Failed to list source graphs")
 			return err
 		}
 		graphs = gs
@@ -64,6 +65,7 @@ func (c *copier) copyGraphs(ctx context.Context, source driver.Database) error {
 	if err := c.backoffCall(ctx, func() error {
 		info, err := destination.Info(ctx)
 		if err != nil {
+			log.Error().Err(err).Msg("Failed to get destination database info.")
 			return err
 		}
 		destinationReplicationFactor = info.ReplicationFactor
@@ -78,7 +80,7 @@ func (c *copier) copyGraphs(ctx context.Context, source driver.Database) error {
 		)
 		if err := c.backoffCall(ctx, func() error {
 			if ok, err := destination.GraphExists(ctx, g.Name()); err != nil {
-				log.Error().Err(err).Msg("Error checking if view exists.")
+				log.Error().Err(err).Msg("Error checking if graph exists.")
 				return err
 			} else {
 				exists = ok
@@ -106,6 +108,7 @@ func (c *copier) copyGraphs(ctx context.Context, source driver.Database) error {
 				ReplicationFactor:       replFactor,
 				WriteConcern:            g.WriteConcern(),
 			}); err != nil {
+				log.Error().Err(err).Msg("Failed to create graph.")
 				return err
 			}
 			return nil
