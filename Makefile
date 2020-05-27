@@ -38,14 +38,3 @@ docker:
 
 docker-push:
 	docker push $(DOCKERIMAGE)
-
-
-.PHONY: update-modules
-update-modules:
-	zutano update-check --quiet --fail
-	test -f go.mod || go mod init
-	go mod edit \
-		$(shell zutano go mod replacements)
-	go get \
-		$(shell zutano go mod latest)
-	go mod tidy
