@@ -30,18 +30,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/briandowns/spinner"
-	"github.com/cenkalti/backoff"
-	"github.com/rs/zerolog/log"
-	"golang.org/x/crypto/ssh/terminal"
-
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
+	"github.com/briandowns/spinner"
+	"github.com/cenkalti/backoff"
 	"github.com/rs/zerolog"
-)
-
-var (
-	backoffMaxTries = 5
+	"github.com/rs/zerolog/log"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 // Copier copies database content from source address to destination address
@@ -81,7 +76,8 @@ type Config struct {
 	// Number of parallel collection copies underway.
 	Parallel int
 	// The batch size of the cursor.
-	BatchSize int
+	BatchSize  int
+	MaxRetries int
 }
 
 // Dependencies defines dependencies for the copier.
@@ -225,6 +221,10 @@ func (c *copier) Copy() error {
 			return err
 		}
 		log.Info().Msg("Done with viewes.")
+		if err := c.copyGraphs(ctx, db); err != nil {
+			return err
+		}
+		log.Info().Msg("Done with graphs.")
 	}
 
 	return nil
@@ -243,7 +243,7 @@ func (c *copier) displayConfirmation() (bool, error) {
 				return false, nil
 			}
 		} else {
-			log.Info().Msg("Force is being used, confirm skipped.")
+			c.Logger.Info().Msg("Force is being used, confirm skipped.")
 		}
 		return true, nil
 	}
@@ -252,7 +252,7 @@ func (c *copier) displayConfirmation() (bool, error) {
 
 // backoffCall is a convenient wrapper around backoff Retry.
 func (c *copier) backoffCall(ctx context.Context, f func() error) error {
-	if err := backoff.Retry(f, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(backoffMaxTries)), ctx)); err != nil {
+	if err := backoff.Retry(f, backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), uint64(c.MaxRetries)), ctx)); err != nil {
 		c.Logger.Error().Err(err).Msg("Backoff eventually failed.")
 		return err
 	}

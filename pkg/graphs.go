@@ -26,10 +26,26 @@ import (
 	"context"
 
 	"github.com/arangodb/go-driver"
+	"github.com/rs/zerolog/log"
 )
 
 // copyGraphs copies all graphs from source database to destination database.
-func (c *copier) copyGraphs(ctx context.Context, source, destination driver.Database) error {
+func (c *copier) copyGraphs(ctx context.Context, source driver.Database) error {
+	ctx = driver.WithIsRestore(ctx, true)
+	var destination driver.Database
+	if err := c.backoffCall(ctx, func() error {
+		// Get the destination database
+		destDB, err := c.destinationClient.Database(ctx, source.Name())
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to get destination database")
+			return err
+		}
+		destination = destDB
+		return nil
+	}); err != nil {
+		return err
+	}
+
 	var graphs []driver.Graph
 	if err := c.backoffCall(ctx, func() error {
 		gs, err := source.Graphs(ctx)
@@ -42,20 +58,59 @@ func (c *copier) copyGraphs(ctx context.Context, source, destination driver.Data
 		return err
 	}
 
+	// Get the replication factor of the target system.
+	var destinationReplicationFactor int
+	if err := c.backoffCall(ctx, func() error {
+		info, err := destination.Info(ctx)
+		if err != nil {
+			return err
+		}
+		destinationReplicationFactor = info.ReplicationFactor
+		return nil
+	}); err != nil {
+		return err
+	}
+
 	for _, g := range graphs {
-		g.
-		if _, err := destination.CreateGraph(ctx, g.Name(), &driver.CreateGraphOptions{
-			OrphanVertexCollections: nil,
-			EdgeDefinitions:         nil,
-			IsSmart:                 false,
-			SmartGraphAttribute:     "",
-			NumberOfShards:          0,
-			ReplicationFactor:       0,
-			WriteConcern:            0,
+		var (
+			exists bool
+		)
+		if err := c.backoffCall(ctx, func() error {
+			if ok, err := destination.GraphExists(ctx, g.Name()); err != nil {
+				log.Error().Err(err).Msg("Error checking if view exists.")
+				return err
+			} else {
+				exists = ok
+			}
+			return nil
 		}); err != nil {
 			return err
 		}
-		return nil
+
+		if exists {
+			continue
+		}
+
+		if err := c.backoffCall(ctx, func() error {
+			replFactor := g.ReplicationFactor()
+			if replFactor < destinationReplicationFactor {
+				replFactor = destinationReplicationFactor
+			}
+			if _, err := destination.CreateGraph(ctx, g.Name(), &driver.CreateGraphOptions{
+				OrphanVertexCollections: g.OrphanCollections(),
+				EdgeDefinitions:         g.EdgeDefinitions(),
+				IsSmart:                 g.IsSmart(),
+				SmartGraphAttribute:     g.SmartGraphAttribute(),
+				NumberOfShards:          g.NumberOfShards(),
+				ReplicationFactor:       replFactor,
+				WriteConcern:            g.WriteConcern(),
+			}); err != nil {
+				return err
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

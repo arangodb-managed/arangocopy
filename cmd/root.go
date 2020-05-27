@@ -28,6 +28,8 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 	flag "github.com/spf13/pflag"
+
+	"github.com/arangodb-managed/arangocopy/pkg"
 )
 
 var (
@@ -35,20 +37,80 @@ var (
 	RootCmd = &cobra.Command{
 		Use:   "arangocopy",
 		Short: "ArangoDB Copy",
-		Long:  "ArangoDB Copy. The copy tool of the ages.",
-		Run:   ShowUsage,
+		Long:  "ArangoDB Copy. Copy data across arangodb instances in an easy, user-friendly and resilient way.",
+		Run:   run,
 	}
-
+	// CLILog is an instance of a zerolog logger.
 	CLILog = zerolog.New(zerolog.ConsoleWriter{
 		Out: os.Stderr,
 	}).With().Timestamp().Logger()
+	// RootArgs are the arguments for the root command.
 	RootArgs struct {
+		source                 pkg.Connection
+		destination            pkg.Connection
+		includedDatabases      []string
+		excludedDatabases      []string
+		includedCollections    []string
+		excludedCollections    []string
+		includedViews          []string
+		excludedViews          []string
+		force                  bool
+		maxParallelCollections int
+		batchSize              int
+		maxRetries             int
 	}
 )
 
-// ShowUsage shows usage of the given command on stdout.
-func ShowUsage(cmd *cobra.Command, args []string) {
-	cmd.Usage()
+func init() {
+	f := RootCmd.PersistentFlags()
+	f.StringVarP(&RootArgs.source.Address, "source-address", "s", "", "Source database address to copy data from.")
+	f.StringVar(&RootArgs.source.Username, "source-username", "", "Source database username if required.")
+	f.StringVar(&RootArgs.source.Password, "source-password", "", "Source database password if required.")
+	f.StringVarP(&RootArgs.destination.Address, "destination-address", "d", "", "Destination database address to copy data to.")
+	f.StringVar(&RootArgs.destination.Username, "destination-username", "", "Destination database username if required.")
+	f.StringVar(&RootArgs.destination.Password, "destination-password", "", "Destination database password if required.")
+	f.IntVarP(&RootArgs.maxParallelCollections, "maximum-parallel-collections", "m", 5, "Maximum number of collections being read out of in parallel.")
+	f.StringSliceVar(&RootArgs.includedDatabases, "included-database", []string{}, "A list of database names which should be included. If provided, only these databases will be copied.")
+	f.StringSliceVar(&RootArgs.excludedDatabases, "exluded-database", []string{}, "A list of database names which should be excluded. Exclusion takes priority over inclusion.")
+	f.StringSliceVar(&RootArgs.includedCollections, "included-collection", []string{}, "A list of collection names which should be included. If provided, only these collections will be copied.")
+	f.StringSliceVar(&RootArgs.excludedCollections, "excluded-collection", []string{}, "A list of collections names which should be excluded. Exclusion takes priority over inclusion.")
+	f.StringSliceVar(&RootArgs.includedViews, "included-view", []string{}, "A list of view names which should be included. If provided, only these views will be copied.")
+	f.StringSliceVar(&RootArgs.excludedViews, "excluded-view", []string{}, "A list of view names which should be excluded. Exclusion takes priority over inclusion.")
+	f.BoolVarP(&RootArgs.force, "force", "f", false, "Force the copy automatically overwriting everything at destination.")
+	f.IntVarP(&RootArgs.batchSize, "batch-size", "b", 4096, "The number of documents to write at once.")
+	f.IntVarP(&RootArgs.maxRetries, "max-retries", "r", 11, "The number of maximum retries attempts. Increasing this number will also increase the exponential fallback timer.")
+}
+
+// run runs the copy operation.
+func run(cmd *cobra.Command, args []string) {
+	// Validate arguments
+	log := CLILog
+	_, argsUsed := ReqOption("source-address", RootArgs.source.Address, args, 0)
+	_, argsUsed = ReqOption("destination-address", RootArgs.destination.Address, args, 1)
+	MustCheckNumberOfArgs(args, argsUsed)
+	copier, err := pkg.NewCopier(pkg.Config{
+		Source:              RootArgs.source,
+		Destination:         RootArgs.destination,
+		IncludedDatabases:   RootArgs.includedDatabases,
+		IncludedCollections: RootArgs.includedCollections,
+		IncludedViews:       RootArgs.includedViews,
+		ExcludedDatabases:   RootArgs.excludedDatabases,
+		ExcludedCollections: RootArgs.excludedCollections,
+		ExcludedViews:       RootArgs.excludedViews,
+		Force:               RootArgs.force,
+		Parallel:            RootArgs.maxParallelCollections,
+		BatchSize:           RootArgs.batchSize,
+		MaxRetries:          RootArgs.maxRetries,
+	}, pkg.Dependencies{
+		Logger: CLILog,
+	})
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to start copy operation.")
+	}
+	if err := copier.Copy(); err != nil {
+		log.Fatal().Err(err).Msg("Failed to copy. Please try again after issue is resolved.")
+	}
+	log.Info().Msg("Success!")
 }
 
 // ReqOption returns given value if not empty.
@@ -62,18 +124,6 @@ func ReqOption(key, value string, args []string, argIndex int) (string, int) {
 		return args[argIndex], argIndex + 1
 	}
 	CLILog.Fatal().Msgf("--%s missing", key)
-	return "", 0
-}
-
-// OptOption returns given value if not empty.
-// Returns: option-value, number-of-args-used(0|argIndex+1)
-func OptOption(key, value string, args []string, argIndex int) (string, int) {
-	if value != "" {
-		return value, 0
-	}
-	if len(args) > argIndex {
-		return args[argIndex], argIndex + 1
-	}
 	return "", 0
 }
 

@@ -30,6 +30,7 @@ import (
 // copyViews copies all views from source database to destination database.
 func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 	log := c.Logger
+	ctx = driver.WithIsRestore(ctx, true)
 	var (
 		destinationDb driver.Database
 		views         []driver.View

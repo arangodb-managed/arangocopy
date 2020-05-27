@@ -277,13 +277,32 @@ func (c *copier) ensureDestinationCollection(ctx context.Context, db driver.Data
 		return nil, err
 	}
 	if !exists {
-		return db.CreateCollection(ctx, coll.Name(), &driver.CreateCollectionOptions{
+		options := &driver.CreateCollectionOptions{
 			JournalSize:       int(props.JournalSize),
 			ReplicationFactor: props.ReplicationFactor,
 			WriteConcern:      props.WriteConcern,
 			WaitForSync:       props.WaitForSync,
+			DoCompact:         &props.DoCompact,
+			CacheEnabled:      &props.CacheEnabled,
+			ShardKeys:         props.ShardKeys,
 			NumberOfShards:    props.NumberOfShards,
-		})
+			IsSystem:          false,
+			Type:              props.Type,
+			KeyOptions: &driver.CollectionKeyOptions{
+				AllowUserKeys: props.KeyOptions.AllowUserKeys,
+				Type:          props.KeyOptions.Type,
+			},
+			DistributeShardsLike: props.DistributeShardsLike,
+			IsSmart:              false,
+			SmartGraphAttribute:  "",
+			SmartJoinAttribute:   "",
+			ShardingStrategy:     props.ShardingStrategy,
+		}
+		if props.SmartJoinAttribute != "" {
+			options.IsSmart = true
+			options.SmartJoinAttribute = props.SmartJoinAttribute
+		}
+		return db.CreateCollection(ctx, coll.Name(), options)
 	}
 	return db.Collection(ctx, coll.Name())
 }
