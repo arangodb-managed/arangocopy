@@ -63,12 +63,6 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 
 	views = c.filterViews(views)
 
-	// Verify if views can be created at target location
-	if err := c.Verifier.VerifyViews(ctx, views, destinationDb); err != nil {
-		log.Error().Err(err).Msg("Verification failed to views.")
-		return err
-	}
-
 	for _, v := range views {
 		log = log.With().Str("view", v.Name()).Str("db", db.Name()).Logger()
 
@@ -120,6 +114,33 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 		}); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// verifyViews verifies all views from source database to destination database.
+func (c *copier) verifyViews(ctx context.Context, db driver.Database) error {
+	log := c.Logger
+	ctx = driver.WithIsRestore(ctx, true)
+	var views []driver.View
+	if err := c.backoffCall(ctx, func() error {
+		vs, err := db.Views(ctx)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to find all views.")
+			return err
+		}
+		views = vs
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	views = c.filterViews(views)
+
+	// Verify if views can be created at target location
+	if err := c.Verifier.VerifyViews(ctx, views); err != nil {
+		log.Error().Err(err).Msg("Verification failed to views.")
+		return err
 	}
 	return nil
 }

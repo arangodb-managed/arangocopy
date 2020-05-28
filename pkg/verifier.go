@@ -35,17 +35,17 @@ import (
 type Verifier interface {
 	// VerifyDatabases takes a list of databases and verifies that each of them can be
 	// created at the destination.
-	VerifyDatabases(ctx context.Context, source []driver.Database, destination driver.Client) error
+	VerifyDatabases(ctx context.Context, dbs []driver.Database) error
 	// VerifyCollections takes a list of collections and verifies that each of them can be
 	// created at the destination.
-	VerifyCollections(ctx context.Context, source []driver.Collection, destination driver.Database) error
+	VerifyCollections(ctx context.Context, collections []driver.Collection) error
 	// VerifyViews takes a list of views and verifies that each of them can be
 	// created at the destination.
-	VerifyViews(ctx context.Context, source []driver.View, destination driver.Database) error
+	VerifyViews(ctx context.Context, views []driver.View) error
 	// VerifyIndexes takes a list of indexes and verifies that each of them can be
 	// created at the destination.
-	VerifyIndexes(ctx context.Context, source []driver.Index, destination driver.Collection) error
+	VerifyIndexes(ctx context.Context, indexes []driver.Index) error
 	// VerifyGraphs takes a list of graphs and verifies that each of them can be
 	// created at the destination.
-	VerifyGraphs(ctx context.Context, source []driver.Graph, destination driver.Database) error
+	VerifyGraphs(ctx context.Context, graphs []driver.Graph) error
 }

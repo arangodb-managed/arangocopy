@@ -38,30 +38,30 @@ func NewNoopVerifier() Verifier {
 
 // VerifyDatabases takes a list of databases and verifies that each of them can be
 // created at the destination.
-func (n *noopVerifier) VerifyDatabases(ctx context.Context, source []driver.Database, destination driver.Client) error {
+func (n *noopVerifier) VerifyDatabases(ctx context.Context, databases []driver.Database) error {
 	return nil
 }
 
 // VerifyCollections takes a list of collections and verifies that each of them can be
 // created at the destination.
-func (n *noopVerifier) VerifyCollections(ctx context.Context, source []driver.Collection, destination driver.Database) error {
+func (n *noopVerifier) VerifyCollections(ctx context.Context, collections []driver.Collection) error {
 	return nil
 }
 
 // VerifyViews takes a list of views and verifies that each of them can be
 // created at the destination.
-func (n *noopVerifier) VerifyViews(ctx context.Context, source []driver.View, destination driver.Database) error {
+func (n *noopVerifier) VerifyViews(ctx context.Context, views []driver.View) error {
 	return nil
 }
 
 // VerifyIndexes takes a list of indexes and verifies that each of them can be
 // created at the destination.
-func (n *noopVerifier) VerifyIndexes(ctx context.Context, source []driver.Index, destination driver.Collection) error {
+func (n *noopVerifier) VerifyIndexes(ctx context.Context, indexes []driver.Index) error {
 	return nil
 }
 
 // VerifyGraphs takes a list of graphs and verifies that each of them can be
 // created at the destination.
-func (n *noopVerifier) VerifyGraphs(ctx context.Context, source []driver.Graph, destination driver.Database) error {
+func (n *noopVerifier) VerifyGraphs(ctx context.Context, graphs []driver.Graph) error {
 	return nil
 }

@@ -76,12 +76,6 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 
 	collections = c.filterCollections(collections)
 
-	// Verify if collections can be created at target location
-	if err := c.Verifier.VerifyCollections(ctx, collections, destinationDB); err != nil {
-		log.Error().Err(err).Msg("Verifier failed for collections.")
-		return err
-	}
-
 	readCtx := driver.WithQueryStream(ctx, true)
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
 	restoreCtx := driver.WithIsRestore(ctx, true)
@@ -199,8 +193,70 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	return nil
 }
 
-// copyIndexes copies all indexes for a collection to destination collection.
-func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, destinationColl driver.Collection) error {
+// copyCollections copies all collections for a database.
+func (c *copier) verifyCollections(ctx context.Context, db driver.Database) error {
+	log := c.Logger
+	var (
+		sourceDB    driver.Database
+		collections []driver.Collection
+	)
+	if err := c.backoffCall(ctx, func() error {
+		sdb, err := c.sourceClient.Database(ctx, db.Name())
+		if err != nil {
+			return err
+		}
+		sourceDB = sdb
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := c.backoffCall(ctx, func() error {
+		colls, err := sourceDB.Collections(ctx)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to list collections for source database.")
+			return err
+		}
+		collections = colls
+		return nil
+	}); err != nil {
+		return err
+	}
+	collections = c.filterCollections(collections)
+
+	// Verify if collections can be created at target location
+	if err := c.Verifier.VerifyCollections(ctx, collections); err != nil {
+		log.Error().Err(err).Msg("Verifier failed for collections.")
+		return err
+	}
+
+	for _, sourceColl := range collections {
+		var props driver.CollectionProperties
+		if err := c.backoffCall(ctx, func() error {
+			sourceProps, err := sourceColl.Properties(ctx)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to get properties.")
+				return err
+			}
+			props = sourceProps
+			return nil
+		}); err != nil {
+			return err
+		}
+		if props.IsSystem {
+			// skip system collections
+			return nil
+		}
+
+		if err := c.verifyIndexes(ctx, sourceColl); err != nil {
+			log.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Verification failed for indexes.")
+			return err
+		}
+	}
+	return nil
+}
+
+// verifyIndexes verifies all indexes for a collection.
+func (c *copier) verifyIndexes(ctx context.Context, sourceColl driver.Collection) error {
 	var indexes []driver.Index
 	if err := c.backoffCall(ctx, func() error {
 		idxs, err := sourceColl.Indexes(ctx)
@@ -214,8 +270,24 @@ func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, 
 	}
 
 	// Check if index can be created at target location
-	if err := c.Verifier.VerifyIndexes(ctx, indexes, destinationColl); err != nil {
+	if err := c.Verifier.VerifyIndexes(ctx, indexes); err != nil {
 		log.Error().Err(err).Msg("Verification failed for indexes.")
+		return err
+	}
+	return nil
+}
+
+// copyIndexes copies all indexes for a collection to destination collection.
+func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, destinationColl driver.Collection) error {
+	var indexes []driver.Index
+	if err := c.backoffCall(ctx, func() error {
+		idxs, err := sourceColl.Indexes(ctx)
+		if err != nil {
+			return err
+		}
+		indexes = idxs
+		return nil
+	}); err != nil {
 		return err
 	}
 

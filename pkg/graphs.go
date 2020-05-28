@@ -60,12 +60,6 @@ func (c *copier) copyGraphs(ctx context.Context, source driver.Database) error {
 	}
 	graphs = c.filterGraphs(graphs)
 
-	// Verify if graph can be created at target location.
-	if err := c.Verifier.VerifyGraphs(ctx, graphs, destination); err != nil {
-		log.Error().Err(err).Msg("Verification failed to graphs.")
-		return err
-	}
-
 	// Get the replication factor of the target system.
 	var destinationReplicationFactor int
 	if err := c.backoffCall(ctx, func() error {
@@ -121,6 +115,32 @@ func (c *copier) copyGraphs(ctx context.Context, source driver.Database) error {
 		}); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// verifyGraphs verifies all graphs from source database to destination database.
+func (c *copier) verfiyGraphs(ctx context.Context, source driver.Database) error {
+	log := c.Logger
+	ctx = driver.WithIsRestore(ctx, true)
+	var graphs []driver.Graph
+	if err := c.backoffCall(ctx, func() error {
+		gs, err := source.Graphs(ctx)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to list source graphs")
+			return err
+		}
+		graphs = gs
+		return nil
+	}); err != nil {
+		return err
+	}
+	graphs = c.filterGraphs(graphs)
+
+	// Verify if graph can be created at target location.
+	if err := c.Verifier.VerifyGraphs(ctx, graphs); err != nil {
+		log.Error().Err(err).Msg("Verification failed to graphs.")
+		return err
 	}
 	return nil
 }
