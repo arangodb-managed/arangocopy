@@ -35,22 +35,11 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	log := c.Logger
 	log.Info().Msg("Beginning to copy over collection data.")
 	var (
-		sourceDB      driver.Database
 		collections   []driver.Collection
 		destinationDB driver.Database
 	)
 	if err := c.backoffCall(ctx, func() error {
-		sdb, err := c.sourceClient.Database(ctx, db.Name())
-		if err != nil {
-			return err
-		}
-		sourceDB = sdb
-		return nil
-	}); err != nil {
-		return err
-	}
-	if err := c.backoffCall(ctx, func() error {
-		colls, err := sourceDB.Collections(ctx)
+		colls, err := db.Collections(ctx)
 		if err != nil {
 			c.Logger.Error().Err(err).Msg("Failed to list collections for source database.")
 			return err
@@ -61,7 +50,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 		return err
 	}
 	if err := c.backoffCall(ctx, func() error {
-		ddb, err := c.destinationClient.Database(ctx, sourceDB.Name())
+		ddb, err := c.destinationClient.Database(ctx, db.Name())
 		if err != nil {
 			c.Logger.Error().Err(err).Msg("Failed to get destination database.")
 			return nil
@@ -128,7 +117,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			}
 			var cursor driver.Cursor
 			if err := c.backoffCall(ctx, func() error {
-				cr, err := sourceDB.Query(readCtx, "FOR d IN @@c RETURN d", bindVars)
+				cr, err := db.Query(readCtx, "FOR d IN @@c RETURN d", bindVars)
 				if err != nil {
 					c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Failed to query source database for collection.")
 					return err
@@ -186,7 +175,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	if c.Dependencies.Spinner != nil {
 		c.Dependencies.Spinner.Stop()
 	}
-	log.Debug().Str("source-database", sourceDB.Name()).Msg("Done copying database data.")
+	log.Debug().Str("source-database", db.Name()).Msg("Done copying database data.")
 	return nil
 }
 
