@@ -32,10 +32,7 @@ import (
 func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 	log := c.Logger
 	ctx = driver.WithIsRestore(ctx, true)
-	var (
-		destinationDb driver.Database
-		views         []driver.View
-	)
+	var destinationDb driver.Database
 	if err := c.backoffCall(ctx, func() error {
 		// Get the destination database
 		destDB, err := c.destinationClient.Database(ctx, db.Name())
@@ -49,19 +46,10 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 		return err
 	}
 
-	if err := c.backoffCall(ctx, func() error {
-		vs, err := db.Views(ctx)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to find all views.")
-			return err
-		}
-		views = vs
-		return nil
-	}); err != nil {
+	views, err := c.getViews(ctx, db)
+	if err != nil {
 		return err
 	}
-
-	views = c.filterViews(views)
 
 	for _, v := range views {
 		log = log.With().Str("view", v.Name()).Str("db", db.Name()).Logger()
@@ -122,25 +110,32 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 func (c *copier) verifyViews(ctx context.Context, db driver.Database) error {
 	log := c.Logger
 	ctx = driver.WithIsRestore(ctx, true)
-	var views []driver.View
-	if err := c.backoffCall(ctx, func() error {
-		vs, err := db.Views(ctx)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to find all views.")
-			return err
-		}
-		views = vs
-		return nil
-	}); err != nil {
+	views, err := c.getViews(ctx, db)
+	if err != nil {
 		return err
 	}
-
-	views = c.filterViews(views)
-
 	// Verify if views can be created at target location
 	if err := c.Verifier.VerifyViews(ctx, views); err != nil {
 		log.Error().Err(err).Msg("Verification failed to views.")
 		return err
 	}
 	return nil
+}
+
+// getViews returns a filtered list of views for a given database.
+func (c *copier) getViews(ctx context.Context, db driver.Database) ([]driver.View, error) {
+	var views []driver.View
+	if err := c.backoffCall(ctx, func() error {
+		vs, err := db.Views(ctx)
+		if err != nil {
+			c.Logger.Error().Err(err).Msg("Failed to find all views.")
+			return err
+		}
+		views = vs
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	views = c.filterViews(views)
+	return views, nil
 }

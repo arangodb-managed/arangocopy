@@ -36,21 +36,7 @@ import (
 func (c *copier) copyCollections(ctx context.Context, db driver.Database) error {
 	log := c.Logger
 	log.Info().Msg("Beginning to copy over collection data.")
-	var (
-		collections   []driver.Collection
-		destinationDB driver.Database
-	)
-	if err := c.backoffCall(ctx, func() error {
-		colls, err := db.Collections(ctx)
-		if err != nil {
-			c.Logger.Error().Err(err).Msg("Failed to list collections for source database.")
-			return err
-		}
-		collections = colls
-		return nil
-	}); err != nil {
-		return err
-	}
+	var destinationDB driver.Database
 	if err := c.backoffCall(ctx, func() error {
 		ddb, err := c.destinationClient.Database(ctx, db.Name())
 		if err != nil {
@@ -63,7 +49,10 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 		return err
 	}
 
-	collections = c.filterCollections(collections)
+	collections, err := c.getCollections(ctx, db)
+	if err != nil {
+		return err
+	}
 
 	readCtx := driver.WithQueryStream(ctx, true)
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
@@ -185,20 +174,10 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 // copyCollections copies all collections for a database.
 func (c *copier) verifyCollections(ctx context.Context, db driver.Database) error {
 	log := c.Logger
-	var collections []driver.Collection
-	if err := c.backoffCall(ctx, func() error {
-		colls, err := db.Collections(ctx)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to list collections for source database.")
-			return err
-		}
-		collections = colls
-		return nil
-	}); err != nil {
+	collections, err := c.getCollections(ctx, db)
+	if err != nil {
 		return err
 	}
-	collections = c.filterCollections(collections)
-
 	// Verify if collections can be created at target location
 	if err := c.Verifier.VerifyCollections(ctx, collections); err != nil {
 		log.Error().Err(err).Msg("Verifier failed for collections.")
@@ -231,17 +210,29 @@ func (c *copier) verifyCollections(ctx context.Context, db driver.Database) erro
 	return nil
 }
 
-// verifyIndexes verifies all indexes for a collection.
-func (c *copier) verifyIndexes(ctx context.Context, sourceColl driver.Collection) error {
-	var indexes []driver.Index
+// getCollections returns the filtered collections for the given database.
+func (c *copier) getCollections(ctx context.Context, db driver.Database) ([]driver.Collection, error) {
+	log := c.Logger
+	var collections []driver.Collection
 	if err := c.backoffCall(ctx, func() error {
-		idxs, err := sourceColl.Indexes(ctx)
+		colls, err := db.Collections(ctx)
 		if err != nil {
+			log.Error().Err(err).Msg("Failed to list collections for source database.")
 			return err
 		}
-		indexes = idxs
+		collections = colls
 		return nil
 	}); err != nil {
+		return nil, err
+	}
+	collections = c.filterCollections(collections)
+	return collections, nil
+}
+
+// verifyIndexes verifies all indexes for a collection.
+func (c *copier) verifyIndexes(ctx context.Context, sourceColl driver.Collection) error {
+	indexes, err := c.getIndexes(ctx, sourceColl)
+	if err != nil {
 		return err
 	}
 
@@ -253,8 +244,8 @@ func (c *copier) verifyIndexes(ctx context.Context, sourceColl driver.Collection
 	return nil
 }
 
-// copyIndexes copies all indexes for a collection to destination collection.
-func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, destinationColl driver.Collection) error {
+// getIndexes returns all indexes for a given collection.
+func (c *copier) getIndexes(ctx context.Context, sourceColl driver.Collection) ([]driver.Index, error) {
 	var indexes []driver.Index
 	if err := c.backoffCall(ctx, func() error {
 		idxs, err := sourceColl.Indexes(ctx)
@@ -264,9 +255,17 @@ func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, 
 		indexes = idxs
 		return nil
 	}); err != nil {
+		return nil, err
+	}
+	return indexes, nil
+}
+
+// copyIndexes copies all indexes for a collection to destination collection.
+func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, destinationColl driver.Collection) error {
+	indexes, err := c.getIndexes(ctx, sourceColl)
+	if err != nil {
 		return err
 	}
-
 	for _, index := range indexes {
 		if err := c.backoffCall(ctx, func() error {
 			switch index.Type() {

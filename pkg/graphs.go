@@ -46,19 +46,10 @@ func (c *copier) copyGraphs(ctx context.Context, source driver.Database) error {
 		return err
 	}
 
-	var graphs []driver.Graph
-	if err := c.backoffCall(ctx, func() error {
-		gs, err := source.Graphs(ctx)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to list source graphs")
-			return err
-		}
-		graphs = gs
-		return nil
-	}); err != nil {
+	graphs, err := c.getGraphs(ctx, source)
+	if err != nil {
 		return err
 	}
-	graphs = c.filterGraphs(graphs)
 
 	// Get the replication factor of the target system.
 	var destinationReplicationFactor int
@@ -123,19 +114,10 @@ func (c *copier) copyGraphs(ctx context.Context, source driver.Database) error {
 func (c *copier) verfiyGraphs(ctx context.Context, source driver.Database) error {
 	log := c.Logger
 	ctx = driver.WithIsRestore(ctx, true)
-	var graphs []driver.Graph
-	if err := c.backoffCall(ctx, func() error {
-		gs, err := source.Graphs(ctx)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to list source graphs")
-			return err
-		}
-		graphs = gs
-		return nil
-	}); err != nil {
+	graphs, err := c.getGraphs(ctx, source)
+	if err != nil {
 		return err
 	}
-	graphs = c.filterGraphs(graphs)
 
 	// Verify if graph can be created at target location.
 	if err := c.Verifier.VerifyGraphs(ctx, graphs); err != nil {
@@ -143,4 +125,22 @@ func (c *copier) verfiyGraphs(ctx context.Context, source driver.Database) error
 		return err
 	}
 	return nil
+}
+
+// getGraphs returns a filtered list of graphs for a database.
+func (c *copier) getGraphs(ctx context.Context, source driver.Database) ([]driver.Graph, error) {
+	var graphs []driver.Graph
+	if err := c.backoffCall(ctx, func() error {
+		gs, err := source.Graphs(ctx)
+		if err != nil {
+			c.Logger.Error().Err(err).Msg("Failed to list source graphs")
+			return err
+		}
+		graphs = gs
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	graphs = c.filterGraphs(graphs)
+	return graphs, nil
 }
