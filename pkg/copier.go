@@ -242,18 +242,16 @@ func (c *copier) Copy() error {
 // displayConfirmation will only display the confirm question if the terminal is an interactive one.
 // otherwise, will fail.
 func (c *copier) displayConfirmation() (bool, error) {
-	if terminal.IsTerminal(int(os.Stdout.Fd())) {
-		if !c.Force {
-			var response string
-			fmt.Print("Please confirm copy operation (y/N) ")
-			fmt.Scanln(&response)
-			if response != "y" {
-				log.Info().Msg("Halting operation.")
-				return false, nil
-			}
-		} else {
-			c.Logger.Info().Msg("Force is being used, confirm skipped.")
+	if terminal.IsTerminal(int(os.Stdout.Fd())) && !c.Force {
+		var response string
+		fmt.Print("Please confirm copy operation (y/N) ")
+		fmt.Scanln(&response)
+		if response != "y" {
+			log.Info().Msg("Halting operation.")
+			return false, nil
 		}
+		return true, nil
+	} else if c.Force {
 		return true, nil
 	}
 	return false, errors.New("either use an interactive terminal or define --force flag")
