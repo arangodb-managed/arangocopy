@@ -296,8 +296,6 @@ func (c *copier) ensureDestinationCollection(ctx context.Context, db driver.Data
 			},
 			DistributeShardsLike: props.DistributeShardsLike,
 			IsSmart:              false,
-			SmartGraphAttribute:  "",
-			SmartJoinAttribute:   "",
 			ShardingStrategy:     props.ShardingStrategy,
 		}
 		if props.SmartJoinAttribute != "" {
