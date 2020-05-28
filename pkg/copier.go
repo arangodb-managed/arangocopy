@@ -78,7 +78,7 @@ type Config struct {
 	// Forces the copy operation ignoring the confirm dialog.
 	Force bool
 	// Number of parallel collection copies underway.
-	Parallel int
+	MaximumParallelCollections int
 	// The batch size of the cursor.
 	BatchSize int
 	// MaxRetries defines the number of retries the backoff will do.
@@ -191,11 +191,9 @@ func (c *copier) getClient(prefix, address, username, password string) (driver.C
 func (c *copier) Copy() error {
 	log := c.Logger
 
-	ok, err := c.displayConfirmation()
-	if err != nil {
+	if ok, err := c.displayConfirmation(); err != nil {
 		return err
-	}
-	if !ok {
+	} else if !ok {
 		log.Info().Msg("Cancelling operation.")
 		return nil
 	}

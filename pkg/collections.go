@@ -77,7 +77,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
 	restoreCtx := driver.WithIsRestore(ctx, true)
 	var g errgroup.Group
-	sem := semaphore.NewWeighted(int64(c.Parallel))
+	sem := semaphore.NewWeighted(int64(c.MaximumParallelCollections))
 	if c.Dependencies.Spinner != nil {
 		c.Dependencies.Spinner.Start()
 	}
@@ -257,7 +257,9 @@ func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, 
 					return err
 				}
 			case driver.EdgeIndex:
+				// These are automatically created.
 			case driver.PrimaryIndex:
+				// These are automatically created.
 			default:
 				return errors.New("unknown index type " + string(index.Type()))
 			}

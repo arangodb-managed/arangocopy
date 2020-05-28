@@ -75,7 +75,7 @@ func (c *copier) filterGraphs(items []driver.Graph) []driver.Graph {
 // isIncluded will decide if an item with a given name should be included or excluded. This can be extended to do
 // different kind of name matchings like partial or regex.
 // If data is included in both, include and exclude, it will be excluded.
-// data, include, exclude
+// name, include, exclude
 func isIncluded(name string, include, exclude map[string]struct{}) (included bool) {
 	if len(include) > 0 {
 		_, ok := include[name]

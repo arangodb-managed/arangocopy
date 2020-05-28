@@ -70,7 +70,7 @@ func init() {
 	f.StringVarP(&RootArgs.destination.Address, "destination-address", "d", "", "Destination database address to copy data to.")
 	f.StringVar(&RootArgs.destination.Username, "destination-username", "", "Destination database username if required.")
 	f.StringVar(&RootArgs.destination.Password, "destination-password", "", "Destination database password if required.")
-	f.IntVarP(&RootArgs.maxParallelCollections, "maximum-parallel-collections", "m", 5, "Maximum number of collections being read out of in parallel.")
+	f.IntVarP(&RootArgs.maxParallelCollections, "maximum-parallel-collections", "m", 10, "Maximum number of collections being copied in parallel.")
 	f.StringSliceVar(&RootArgs.includedDatabases, "included-database", []string{}, "A list of database names which should be included. If provided, only these databases will be copied.")
 	f.StringSliceVar(&RootArgs.excludedDatabases, "exluded-database", []string{}, "A list of database names which should be excluded. Exclusion takes priority over inclusion.")
 	f.StringSliceVar(&RootArgs.includedCollections, "included-collection", []string{}, "A list of collection names which should be included. If provided, only these collections will be copied.")
@@ -81,7 +81,7 @@ func init() {
 	f.StringSliceVar(&RootArgs.excludedGraphs, "excluded-graph", []string{}, "A list of graph names which should be excluded. Exclusion takes priority over inclusion.")
 	f.BoolVarP(&RootArgs.force, "force", "f", false, "Force the copy automatically overwriting everything at destination.")
 	f.IntVarP(&RootArgs.batchSize, "batch-size", "b", 4096, "The number of documents to write at once.")
-	f.IntVarP(&RootArgs.maxRetries, "max-retries", "r", 11, "The number of maximum retries attempts. Increasing this number will also increase the exponential fallback timer.")
+	f.IntVarP(&RootArgs.maxRetries, "max-retries", "r", 9, "The number of maximum retries attempts. Increasing this number will also increase the exponential fallback timer.")
 }
 
 // run runs the copy operation.
@@ -91,29 +91,33 @@ func run(cmd *cobra.Command, args []string) {
 	_, argsUsed := ReqOption("source-address", RootArgs.source.Address, args, 0)
 	_, argsUsed = ReqOption("destination-address", RootArgs.destination.Address, args, 1)
 	MustCheckNumberOfArgs(args, argsUsed)
+
+	// Create copier
 	copier, err := pkg.NewCopier(pkg.Config{
-		Source:              RootArgs.source,
-		Destination:         RootArgs.destination,
-		IncludedDatabases:   RootArgs.includedDatabases,
-		ExcludedDatabases:   RootArgs.excludedDatabases,
-		IncludedCollections: RootArgs.includedCollections,
-		ExcludedCollections: RootArgs.excludedCollections,
-		IncludedViews:       RootArgs.includedViews,
-		ExcludedViews:       RootArgs.excludedViews,
-		IncludedGraphs:      RootArgs.includedGraphs,
-		ExcludedGraphs:      RootArgs.excludedGraphs,
-		Force:               RootArgs.force,
-		Parallel:            RootArgs.maxParallelCollections,
-		BatchSize:           RootArgs.batchSize,
-		MaxRetries:          RootArgs.maxRetries,
+		Force:                      RootArgs.force,
+		Source:                     RootArgs.source,
+		BatchSize:                  RootArgs.batchSize,
+		MaxRetries:                 RootArgs.maxRetries,
+		Destination:                RootArgs.destination,
+		IncludedViews:              RootArgs.includedViews,
+		ExcludedViews:              RootArgs.excludedViews,
+		IncludedGraphs:             RootArgs.includedGraphs,
+		ExcludedGraphs:             RootArgs.excludedGraphs,
+		IncludedDatabases:          RootArgs.includedDatabases,
+		ExcludedDatabases:          RootArgs.excludedDatabases,
+		IncludedCollections:        RootArgs.includedCollections,
+		ExcludedCollections:        RootArgs.excludedCollections,
+		MaximumParallelCollections: RootArgs.maxParallelCollections,
 	}, pkg.Dependencies{
 		Logger: CLILog,
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to start copy operation.")
 	}
+
+	// Start copy operatio
 	if err := copier.Copy(); err != nil {
-		log.Fatal().Err(err).Msg("Failed to copy. Please try again after issue is resolved.")
+		log.Fatal().Err(err).Msg("Failed to copy. Please try again after the issue is resolved.")
 	}
 	log.Info().Msg("Success!")
 }
