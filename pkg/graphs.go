@@ -60,6 +60,12 @@ func (c *copier) copyGraphs(ctx context.Context, source driver.Database) error {
 	}
 	graphs = c.filterGraphs(graphs)
 
+	// Verify if graph can be created at target location.
+	if err := c.Verifier.VerifyGraphs(ctx, graphs, destination); err != nil {
+		log.Error().Err(err).Msg("Verification failed to graphs.")
+		return err
+	}
+
 	// Get the replication factor of the target system.
 	var destinationReplicationFactor int
 	if err := c.backoffCall(ctx, func() error {

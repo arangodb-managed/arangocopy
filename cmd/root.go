@@ -109,7 +109,8 @@ func run(cmd *cobra.Command, args []string) {
 		ExcludedCollections:        RootArgs.excludedCollections,
 		MaximumParallelCollections: RootArgs.maxParallelCollections,
 	}, pkg.Dependencies{
-		Logger: CLILog,
+		Logger:   CLILog,
+		Verifier: pkg.NewNoopVerifier(),
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to start copy operation.")

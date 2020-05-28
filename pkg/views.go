@@ -19,6 +19,7 @@
 //
 // Author Gergely Brautigam
 //
+
 package pkg
 
 import (

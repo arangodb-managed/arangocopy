@@ -19,6 +19,7 @@
 //
 // Author Gergely Brautigam
 //
+
 package pkg
 
 import (
@@ -26,6 +27,7 @@ import (
 	"errors"
 
 	"github.com/arangodb/go-driver"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 )
@@ -73,6 +75,13 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	}
 
 	collections = c.filterCollections(collections)
+
+	// Verify if collections can be created at target location
+	if err := c.Verifier.VerifyCollections(ctx, collections, destinationDB); err != nil {
+		log.Error().Err(err).Msg("Verifier failed for collections.")
+		return err
+	}
+
 	readCtx := driver.WithQueryStream(ctx, true)
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
 	restoreCtx := driver.WithIsRestore(ctx, true)
@@ -203,6 +212,13 @@ func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, 
 	}); err != nil {
 		return err
 	}
+
+	// Check if index can be created at target location
+	if err := c.Verifier.VerifyIndexes(ctx, indexes, destinationColl); err != nil {
+		log.Error().Err(err).Msg("Verification failed for indexes.")
+		return err
+	}
+
 	for _, index := range indexes {
 		if err := c.backoffCall(ctx, func() error {
 			switch index.Type() {
