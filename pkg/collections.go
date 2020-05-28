@@ -196,22 +196,9 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 // copyCollections copies all collections for a database.
 func (c *copier) verifyCollections(ctx context.Context, db driver.Database) error {
 	log := c.Logger
-	var (
-		sourceDB    driver.Database
-		collections []driver.Collection
-	)
+	var collections []driver.Collection
 	if err := c.backoffCall(ctx, func() error {
-		sdb, err := c.sourceClient.Database(ctx, db.Name())
-		if err != nil {
-			return err
-		}
-		sourceDB = sdb
-		return nil
-	}); err != nil {
-		return err
-	}
-	if err := c.backoffCall(ctx, func() error {
-		colls, err := sourceDB.Collections(ctx)
+		colls, err := db.Collections(ctx)
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to list collections for source database.")
 			return err
