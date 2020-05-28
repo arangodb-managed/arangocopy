@@ -63,8 +63,8 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 	views = c.filterViews(views)
 	for _, v := range views {
 		log = log.With().Str("view", v.Name()).Str("db", db.Name()).Logger()
-		// Check if view already exists
 
+		// Check if view already exists
 		var (
 			exists bool
 			props  driver.ArangoSearchViewProperties
