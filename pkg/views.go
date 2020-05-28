@@ -62,6 +62,13 @@ func (c *copier) copyViews(ctx context.Context, db driver.Database) error {
 	}
 
 	views = c.filterViews(views)
+
+	// Verify if views can be created at target location
+	if err := c.Verifier.VerifyViews(ctx, views, destinationDb); err != nil {
+		log.Error().Err(err).Msg("Verification failed to views.")
+		return err
+	}
+
 	for _, v := range views {
 		log = log.With().Str("view", v.Name()).Str("db", db.Name()).Logger()
 
