@@ -24,6 +24,7 @@ package pkg
 import (
 	"context"
 	"errors"
+	"sort"
 
 	"github.com/arangodb/go-driver"
 	"golang.org/x/sync/errgroup"
@@ -62,6 +63,10 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	}
 
 	collections = c.filterCollections(collections)
+	if err := c.sortCollections(ctx, collections); err != nil {
+		return err
+	}
+
 	readCtx := driver.WithQueryStream(ctx, true)
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
 	restoreCtx := driver.WithIsRestore(ctx, true)
@@ -70,13 +75,25 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	if c.Dependencies.Spinner != nil {
 		c.Dependencies.Spinner.Start()
 	}
+
+	// Create the collections sequentially here
+	for _, sourceColl := range collections {
+		if err := c.createCollection(restoreCtx, destinationDB, sourceColl); err != nil {
+			c.Logger.Error().Err(err).Msg("Failed to ensure destination collection.")
+			return err
+		}
+	}
+
+	// Start the data copy operation
 	for _, sourceColl := range collections {
 		sourceColl := sourceColl
 		g.Go(func() error {
+			// Ensure semaphore.
 			if err := sem.Acquire(ctx, 1); err != nil {
 				return err
 			}
 			defer sem.Release(1)
+
 			var props driver.CollectionProperties
 			if err := c.backoffCall(ctx, func() error {
 				sourceProps, err := sourceColl.Properties(ctx)
@@ -93,9 +110,10 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				// skip system collections
 				return nil
 			}
+
 			var destinationColl driver.Collection
 			if err := c.backoffCall(ctx, func() error {
-				dColl, err := c.ensureDestinationCollection(ctx, destinationDB, sourceColl, props)
+				dColl, err := destinationDB.Collection(ctx, sourceColl.Name())
 				if err != nil {
 					c.Logger.Error().Err(err).Msg("Failed to ensure destination collection.")
 					return err
@@ -260,38 +278,93 @@ func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, 
 	return nil
 }
 
-// ensureDestinationCollection ensures that a collection exists for a database on the destination and returns it.
-func (c *copier) ensureDestinationCollection(ctx context.Context, db driver.Database, coll driver.Collection, props driver.CollectionProperties) (driver.Collection, error) {
+// createCollection creates a collection on the destination database.
+func (c *copier) createCollection(ctx context.Context, db driver.Database, coll driver.Collection) error {
+	var props driver.CollectionProperties
+	if err := c.backoffCall(ctx, func() error {
+		sourceProps, err := coll.Properties(ctx)
+		if err != nil {
+			c.Logger.Error().Err(err).Msg("Failed to get properties.")
+			return err
+		}
+		props = sourceProps
+		return nil
+	}); err != nil {
+		return err
+	}
+	if props.IsSystem {
+		// skip system collections
+		return nil
+	}
 	exists, err := db.CollectionExists(ctx, coll.Name())
 	if err != nil {
 		c.Logger.Warn().Err(err).Msg("Failed to get if collection exists.")
-		return nil, err
+		return err
 	}
-	if !exists {
-		options := &driver.CreateCollectionOptions{
-			JournalSize:       int(props.JournalSize),
-			ReplicationFactor: props.ReplicationFactor,
-			WriteConcern:      props.WriteConcern,
-			WaitForSync:       props.WaitForSync,
-			DoCompact:         &props.DoCompact,
-			CacheEnabled:      &props.CacheEnabled,
-			ShardKeys:         props.ShardKeys,
-			NumberOfShards:    props.NumberOfShards,
-			IsSystem:          false,
-			Type:              props.Type,
-			KeyOptions: &driver.CollectionKeyOptions{
-				AllowUserKeys: props.KeyOptions.AllowUserKeys,
-				Type:          props.KeyOptions.Type,
-			},
-			DistributeShardsLike: props.DistributeShardsLike,
-			IsSmart:              false,
-			ShardingStrategy:     props.ShardingStrategy,
-		}
-		if props.SmartJoinAttribute != "" {
-			options.IsSmart = true
-			options.SmartJoinAttribute = props.SmartJoinAttribute
-		}
-		return db.CreateCollection(ctx, coll.Name(), options)
+	if exists {
+		return nil
 	}
-	return db.Collection(ctx, coll.Name())
+	options := &driver.CreateCollectionOptions{
+		JournalSize:       int(props.JournalSize),
+		ReplicationFactor: props.ReplicationFactor,
+		WriteConcern:      props.WriteConcern,
+		WaitForSync:       props.WaitForSync,
+		DoCompact:         &props.DoCompact,
+		CacheEnabled:      &props.CacheEnabled,
+		ShardKeys:         props.ShardKeys,
+		NumberOfShards:    props.NumberOfShards,
+		IsSystem:          false,
+		Type:              props.Type,
+		KeyOptions: &driver.CollectionKeyOptions{
+			AllowUserKeys: props.KeyOptions.AllowUserKeys,
+			Type:          props.KeyOptions.Type,
+		},
+		DistributeShardsLike: props.DistributeShardsLike,
+		IsSmart:              false,
+		ShardingStrategy:     props.ShardingStrategy,
+	}
+	if props.SmartJoinAttribute != "" {
+		options.IsSmart = true
+		options.SmartJoinAttribute = props.SmartJoinAttribute
+	}
+	if err := c.backoffCall(ctx, func() error {
+		if _, err := db.CreateCollection(ctx, coll.Name(), options); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *copier) sortCollections(ctx context.Context, collections []driver.Collection) error {
+	// gather all props into a map to minimalise the sorting function
+	propMap := make(map[string]driver.CollectionProperties)
+	for _, coll := range collections {
+		if err := c.backoffCall(ctx, func() error {
+			prop, err := coll.Properties(ctx)
+			if err != nil {
+				c.Logger.Error().Err(err).Msg("Failed to get properties.")
+				return err
+			}
+			propMap[coll.Name()] = prop
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	sort.SliceStable(collections, func(i, j int) bool {
+		pi := propMap[collections[i].Name()]
+		pj := propMap[collections[j].Name()]
+		if pi.DistributeShardsLike == "" && pj.DistributeShardsLike != "" {
+			return true
+		} else if pi.DistributeShardsLike == "" && pj.DistributeShardsLike == "" {
+			if pi.Type == driver.CollectionTypeDocument && pj.Type == driver.CollectionTypeEdge {
+				return true
+			}
+		}
+		return false
+	})
+	return nil
 }
