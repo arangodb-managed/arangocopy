@@ -336,7 +336,7 @@ func (c *copier) createCollection(ctx context.Context, db driver.Database, coll 
 	return nil
 }
 
-// sortCollections returns a sorted collection list on the following premis:
+// sortCollections sorts a collection list on the following premis:
 // No DistributedShardsLike comes before DistributedShardsLike. In case two collections don't have this setting
 // a vertex collection comes before an edge collection.
 func (c *copier) sortCollections(collections []driver.Collection, m map[string]driver.CollectionProperties) error {
