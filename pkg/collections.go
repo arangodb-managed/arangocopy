@@ -96,7 +96,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 
 	// Create the collections sequentially here
 	for _, sourceColl := range collections {
-		if err := c.createCollection(restoreCtx, destinationDB, sourceColl); err != nil {
+		if err := c.createCollection(restoreCtx, destinationDB, sourceColl, propsMap[sourceColl.Name()]); err != nil {
 			c.Logger.Error().Err(err).Msg("Failed to ensure destination collection.")
 			return err
 		}
@@ -289,19 +289,7 @@ func (c *copier) copyIndexes(ctx context.Context, sourceColl driver.Collection, 
 }
 
 // createCollection creates a collection on the destination database.
-func (c *copier) createCollection(ctx context.Context, db driver.Database, coll driver.Collection) error {
-	var props driver.CollectionProperties
-	if err := c.backoffCall(ctx, func() error {
-		sourceProps, err := coll.Properties(ctx)
-		if err != nil {
-			c.Logger.Error().Err(err).Msg("Failed to get properties.")
-			return err
-		}
-		props = sourceProps
-		return nil
-	}); err != nil {
-		return err
-	}
+func (c *copier) createCollection(ctx context.Context, db driver.Database, coll driver.Collection, props driver.CollectionProperties) error {
 	if props.IsSystem {
 		// skip system collections
 		return nil
