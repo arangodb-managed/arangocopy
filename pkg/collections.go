@@ -343,14 +343,23 @@ func (c *copier) sortCollections(collections []driver.Collection, m map[string]d
 	sort.SliceStable(collections, func(i, j int) bool {
 		pi := m[collections[i].Name()]
 		pj := m[collections[j].Name()]
+
+		// Collections without DistributeShardsLike must come before collections which have that setting
 		if pi.DistributeShardsLike == "" && pj.DistributeShardsLike != "" {
 			return true
-		} else if pi.DistributeShardsLike == "" && pj.DistributeShardsLike == "" {
-			if pi.Type == driver.CollectionTypeDocument && pj.Type == driver.CollectionTypeEdge {
-				return true
-			}
+		} else if pi.DistributeShardsLike != "" && pj.DistributeShardsLike == "" {
+			return false
 		}
-		return false
+
+		// Vertex collections should come before edge collections
+		if pi.Type == driver.CollectionTypeDocument && pj.Type == driver.CollectionTypeEdge {
+			return true
+		} else if pi.Type == driver.CollectionTypeEdge && pj.Type == driver.CollectionTypeDocument {
+			return false
+		}
+
+		// Lastely, sort by name
+		return pi.Name < pj.Name
 	})
 	return nil
 }
