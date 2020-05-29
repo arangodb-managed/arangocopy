@@ -63,7 +63,25 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	}
 
 	collections = c.filterCollections(collections)
-	if err := c.sortCollections(ctx, collections); err != nil {
+
+	// gather all props into a map to minimise the sorting function and not repeate the props
+	// call later when copying the data.
+	propsMap := make(map[string]driver.CollectionProperties)
+	for _, coll := range collections {
+		if err := c.backoffCall(ctx, func() error {
+			prop, err := coll.Properties(ctx)
+			if err != nil {
+				c.Logger.Error().Err(err).Msg("Failed to get properties.")
+				return err
+			}
+			propsMap[coll.Name()] = prop
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	if err := c.sortCollections(collections, propsMap); err != nil {
+		log.Error().Err(err).Msg("Failed to sort collections")
 		return err
 	}
 
@@ -94,17 +112,9 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			}
 			defer sem.Release(1)
 
-			var props driver.CollectionProperties
-			if err := c.backoffCall(ctx, func() error {
-				sourceProps, err := sourceColl.Properties(ctx)
-				if err != nil {
-					c.Logger.Error().Err(err).Msg("Failed to get properties.")
-					return err
-				}
-				props = sourceProps
-				return nil
-			}); err != nil {
-				return err
+			props, ok := propsMap[sourceColl.Name()]
+			if !ok {
+				return errors.New("no properties found for collection")
 			}
 			if props.IsSystem {
 				// skip system collections
@@ -338,25 +348,10 @@ func (c *copier) createCollection(ctx context.Context, db driver.Database, coll 
 	return nil
 }
 
-func (c *copier) sortCollections(ctx context.Context, collections []driver.Collection) error {
-	// gather all props into a map to minimalise the sorting function
-	propMap := make(map[string]driver.CollectionProperties)
-	for _, coll := range collections {
-		if err := c.backoffCall(ctx, func() error {
-			prop, err := coll.Properties(ctx)
-			if err != nil {
-				c.Logger.Error().Err(err).Msg("Failed to get properties.")
-				return err
-			}
-			propMap[coll.Name()] = prop
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
+func (c *copier) sortCollections(collections []driver.Collection, m map[string]driver.CollectionProperties) error {
 	sort.SliceStable(collections, func(i, j int) bool {
-		pi := propMap[collections[i].Name()]
-		pj := propMap[collections[j].Name()]
+		pi := m[collections[i].Name()]
+		pj := m[collections[j].Name()]
 		if pi.DistributeShardsLike == "" && pj.DistributeShardsLike != "" {
 			return true
 		} else if pi.DistributeShardsLike == "" && pj.DistributeShardsLike == "" {
