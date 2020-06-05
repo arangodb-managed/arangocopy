@@ -83,10 +83,8 @@ func isIncluded(name string, include, exclude map[string]struct{}) (included boo
 	} else {
 		included = true
 	}
-	if len(exclude) > 0 {
-		if _, ok := exclude[name]; ok {
-			included = false
-		}
+	if _, ok := exclude[name]; ok {
+		included = false
 	}
 	return
 }
