@@ -55,6 +55,27 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 		return err
 	}
 
+	// gather all props into a map to minimise the sorting function and not repeate the props
+	// call later when copying the data.
+	propsMap := make(map[string]driver.CollectionProperties)
+	for _, coll := range collections {
+		if err := c.backoffCall(ctx, func() error {
+			prop, err := coll.Properties(ctx)
+			if err != nil {
+				c.Logger.Error().Err(err).Msg("Failed to get properties.")
+				return err
+			}
+			propsMap[coll.Name()] = prop
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	if err := c.sortCollections(collections, propsMap); err != nil {
+		log.Error().Err(err).Msg("Failed to sort collections")
+		return err
+	}
+
 	readCtx := driver.WithQueryStream(ctx, true)
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
 	restoreCtx := driver.WithIsRestore(ctx, true)
