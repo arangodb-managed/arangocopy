@@ -87,8 +87,9 @@ type Config struct {
 
 // Dependencies defines dependencies for the copier.
 type Dependencies struct {
-	Logger  zerolog.Logger
-	Spinner *spinner.Spinner
+	Logger   zerolog.Logger
+	Spinner  *spinner.Spinner
+	Verifier Verifier
 }
 
 type copier struct {
@@ -215,6 +216,28 @@ func (c *copier) Copy() error {
 
 	databases = c.filterDatabases(databases)
 
+	// Verify if databases can be created at target location.
+	if err := c.Verifier.VerifyDatabases(ctx, databases); err != nil {
+		c.Logger.Error().Err(err).Msg("Verification failed for databases.")
+		return err
+	}
+
+	c.Logger.Info().Msg("Launching pre-create verification process...")
+	// Verification loop without creation.
+	for _, db := range databases {
+		if err := c.verifyCollections(ctx, db); err != nil {
+			return err
+		}
+		if err := c.verifyViews(ctx, db); err != nil {
+			return err
+		}
+		if err := c.verfiyGraphs(ctx, db); err != nil {
+			return err
+		}
+	}
+	c.Logger.Info().Msg("Verification passed. Commencing copy operation.")
+
+	// After verification finishes, perform the actual copy operation.
 	for _, db := range databases {
 		if err := c.copyDatabase(ctx, db); err != nil {
 			return err
