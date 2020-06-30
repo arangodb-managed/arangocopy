@@ -3,7 +3,7 @@ module github.com/arangodb-managed/arangocopy
 go 1.13
 
 require (
-	github.com/arangodb/go-driver v0.0.0-20200528083541-2441a69bf0ed
+	github.com/arangodb/go-driver v0.0.0-20200529120925-bf58c3c102b4
 	github.com/briandowns/spinner v1.11.1
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/coreos/go-semver v0.3.0
