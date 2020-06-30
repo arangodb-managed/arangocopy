@@ -31,7 +31,7 @@ import (
 // copyDatabase creates a database at the destination.
 func (c *copier) copyDatabase(ctx context.Context, db driver.Database) error {
 	return c.backoffCall(ctx, func() error {
-		if err := c.ensureDestinationDatabase(ctx, db.Name()); err != nil {
+		if err := c.ensureDestinationDatabase(ctx, db); err != nil {
 			return err
 		}
 		return nil
@@ -39,14 +39,26 @@ func (c *copier) copyDatabase(ctx context.Context, db driver.Database) error {
 }
 
 // ensureDestinationDatabase ensures that a database exists at the destination.
-func (c *copier) ensureDestinationDatabase(ctx context.Context, dbName string) error {
-	c.Logger.Debug().Str("database-name", dbName).Msg("Ensuring database exists")
-	if exists, err := c.destinationClient.DatabaseExists(ctx, dbName); err != nil {
+func (c *copier) ensureDestinationDatabase(ctx context.Context, db driver.Database) error {
+	c.Logger.Debug().Str("database-name", db.Name()).Msg("Ensuring database exists")
+	if exists, err := c.destinationClient.DatabaseExists(ctx, db.Name()); err != nil {
 		c.Logger.Warn().Err(err).Msg("Failed to get if database exists.")
 		return err
 	} else if exists {
 		return nil
 	}
-	_, err := c.destinationClient.CreateDatabase(ctx, dbName, nil)
+
+	info, err := db.Info(ctx)
+	if err != nil {
+		c.Logger.Warn().Err(err).Msg("Failed to get database info.")
+		return err
+	}
+	_, err = c.destinationClient.CreateDatabase(ctx, db.Name(), &driver.CreateDatabaseOptions{
+		Options: driver.CreateDatabaseDefaultOptions{
+			Sharding:          info.Sharding,
+			ReplicationFactor: info.ReplicationFactor,
+			WriteConcern:      info.WriteConcern,
+		},
+	})
 	return err
 }
