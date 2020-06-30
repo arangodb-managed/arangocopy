@@ -116,7 +116,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			if err := c.backoffCall(ctx, func() error {
 				dColl, err := destinationDB.Collection(ctx, sourceColl.Name())
 				if err != nil {
-					c.Logger.Error().Err(err).Msg("Failed to ensure destination collection.")
+					c.Logger.Error().Err(err).Msg("Failed to find destination collection.")
 					return err
 				}
 				destinationColl = dColl
@@ -400,6 +400,7 @@ func (c *copier) createCollection(ctx context.Context, db driver.Database, coll 
 	}
 	if err := c.backoffCall(ctx, func() error {
 		if _, err := db.CreateCollection(ctx, coll.Name(), options); err != nil {
+			c.Logger.Warn().Interface("options", options).Msg("CreateCollection failed with the following options.")
 			return err
 		}
 		return nil
