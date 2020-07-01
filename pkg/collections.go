@@ -30,6 +30,7 @@ import (
 	"github.com/arangodb/go-driver"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 // copyCollections copies all collections for a database.
@@ -79,8 +80,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
 	restoreCtx := driver.WithIsRestore(ctx, true)
 	var g errgroup.Group
-	// sem := semaphore.NewWeighted(int64(c.MaximumParallelCollections))
-	sem := make(chan struct{}, c.MaximumParallelCollections)
+	sem := semaphore.NewWeighted(int64(c.MaximumParallelCollections))
 	if c.Dependencies.Spinner != nil {
 		c.Dependencies.Spinner.Start()
 	}
@@ -99,8 +99,10 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 		g.Go(func() error {
 			// Ensure semaphore.
 			log.Debug().Msg("Before acquire")
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			if err := sem.Acquire(ctx, 1); err != nil {
+				return err
+			}
+			defer sem.Release(1)
 
 			log.Debug().Msg("Acquired semaphore")
 			props, ok := propsMap[sourceColl.Name()]
