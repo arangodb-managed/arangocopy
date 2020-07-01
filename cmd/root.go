@@ -116,6 +116,10 @@ func run(cmd *cobra.Command, args []string) {
 		log.Fatal().Err(err).Msg("Failed to start copy operation.")
 	}
 
+	if RootArgs.maxParallelCollections < 1 {
+		log.Fatal().Err(err).Msg("maximum-parallel-collections cannot be below 1")
+	}
+
 	// Start copy operatio
 	if err := copier.Copy(); err != nil {
 		log.Fatal().Err(err).Msg("Failed to copy. Please try again after the issue is resolved.")
