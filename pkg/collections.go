@@ -92,12 +92,13 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			return err
 		}
 	}
-
+	log.Debug().Interface("collections", collections).Msg("Created collection... starting error group loop")
 	// Start the data copy operation
 	for _, sourceColl := range collections {
 		sourceColl := sourceColl
 		g.Go(func() error {
 			// Ensure semaphore.
+			log.Debug().Msg("Before acquire")
 			if err := sem.Acquire(ctx, 1); err != nil {
 				return err
 			}
