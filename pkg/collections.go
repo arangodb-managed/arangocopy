@@ -103,6 +103,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			}
 			defer sem.Release(1)
 
+			log.Debug().Msg("Acquired semaphore")
 			props, ok := propsMap[sourceColl.Name()]
 			if !ok {
 				return errors.New("no properties found for collection")
@@ -111,7 +112,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				// skip system collections
 				return nil
 			}
-
+			log.Debug().Interface("props", props).Msg("Props found")
 			var destinationColl driver.Collection
 			if err := c.backoffCall(ctx, func() error {
 				dColl, err := destinationDB.Collection(ctx, sourceColl.Name())
@@ -124,13 +125,13 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			}); err != nil {
 				return err
 			}
-
+			log.Debug().Msg("Destination collcetion created")
 			// Copy over all indexes for this collection.
 			if err := c.copyIndexes(restoreCtx, sourceColl, destinationColl); err != nil {
 				c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Failed to copy all indexes.")
 				return err
 			}
-
+			log.Debug().Msg("Indexes successfully copied")
 			bindVars := map[string]interface{}{
 				"@c": sourceColl.Name(),
 			}
@@ -147,6 +148,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				return err
 			}
 			defer cursor.Close()
+			log.Debug().Msg("Cursor created")
 			batch := make([]interface{}, 0, c.BatchSize)
 			for {
 				var (
@@ -166,13 +168,14 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				}); err != nil {
 					return err
 				}
-
+				log.Debug().Msg("ReadDocument...")
 				if (noMoreError && len(batch) > 0) || len(batch) >= c.BatchSize {
 					if err := c.backoffCall(ctx, func() error {
 						if _, _, err := destinationColl.CreateDocuments(restoreCtx, batch); err != nil {
 							c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Interface("document", d).Msg("Creating a document failed.")
 							return err
 						}
+						log.Debug().Msg("Create documents called")
 						batch = make([]interface{}, 0, c.BatchSize)
 						return nil
 					}); err != nil {
@@ -181,6 +184,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				}
 
 				if noMoreError {
+					log.Debug().Msg("No more error")
 					break
 				}
 			}
