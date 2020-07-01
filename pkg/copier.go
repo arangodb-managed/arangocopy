@@ -113,6 +113,12 @@ func NewCopier(cfg Config, deps Dependencies) (Copier, error) {
 		Config:       cfg,
 		Dependencies: deps,
 	}
+
+	if deps.Verifier == nil {
+		c.Logger.Error().Msg("Please provide a verifier.")
+		return nil, errors.New("verifier missing")
+	}
+
 	// Set up source client.
 	if client, err := c.getClient("Source", cfg.Source.Address, cfg.Source.Username, cfg.Source.Password); err != nil {
 		c.Logger.Error().Err(err).Msg("Failed to connect to source address.")
