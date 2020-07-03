@@ -25,7 +25,11 @@ package pkg
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
+
+	"github.com/vbauerster/mpb/v5"
+	"github.com/vbauerster/mpb/v5/decor"
 
 	"github.com/arangodb/go-driver"
 	"github.com/rs/zerolog/log"
@@ -81,10 +85,6 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	restoreCtx := driver.WithIsRestore(ctx, true)
 	var g errgroup.Group
 	sem := semaphore.NewWeighted(int64(c.MaximumParallelCollections))
-	if c.Dependencies.Spinner != nil {
-		c.Dependencies.Spinner.Start()
-	}
-
 	// Create the collections sequentially here
 	for _, sourceColl := range collections {
 		if err := c.createCollection(restoreCtx, destinationDB, sourceColl, propsMap[sourceColl.Name()]); err != nil {
@@ -92,7 +92,6 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			return err
 		}
 	}
-	log.Debug().Interface("collections", collections).Msg("Created collection... starting error group loop")
 	// Start the data copy operation
 	for _, sourceColl := range collections {
 		sourceColl := sourceColl
@@ -145,6 +144,23 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			}
 			defer cursor.Close()
 			batch := make([]interface{}, 0, c.BatchSize)
+			docCount, err := c.countDocuments(readCtx, sourceColl)
+			if err != nil {
+				return err
+			}
+			var bar *mpb.Bar
+			if c.progress != nil {
+				bar = c.progress.AddBar(int64(docCount), mpb.PrependDecorators(
+					decor.Name(""),
+					decor.NewPercentage("%d"),
+				),
+					mpb.AppendDecorators(
+						decor.Name("ETA: "),
+						decor.OnComplete(
+							decor.AverageETA(decor.ET_STYLE_GO), "done",
+						),
+					))
+			}
 			for {
 				var (
 					d           interface{}
@@ -170,6 +186,9 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 							return err
 						}
 						batch = make([]interface{}, 0, c.BatchSize)
+						if bar != nil {
+							bar.IncrBy(c.BatchSize)
+						}
 						return nil
 					}); err != nil {
 						return err
@@ -180,15 +199,15 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 					break
 				}
 			}
+			if bar != nil {
+				bar.Completed()
+			}
 			return nil
 		})
 	}
 	if err := g.Wait(); err != nil {
 		log.Error().Err(err).Msg("One of the workers failed to copy data.")
 		return err
-	}
-	if c.Dependencies.Spinner != nil {
-		c.Dependencies.Spinner.Stop()
 	}
 	log.Debug().Str("source-database", db.Name()).Msg("Done copying database data.")
 	return nil
@@ -231,6 +250,22 @@ func (c *copier) verifyCollections(ctx context.Context, db driver.Database) erro
 		}
 	}
 	return nil
+}
+
+// countDocuments takes a collection and returns the number of documents in it.
+func (c *copier) countDocuments(ctx context.Context, collection driver.Collection) (int, error) {
+	var result = struct {
+		Count int `json:"count"`
+	}{}
+	verify := fmt.Sprintf("RETURN { count: LENGTH(%s) }", collection.Name())
+	cursor, err := collection.Database().Query(ctx, verify, nil)
+	if err != nil {
+		return -1, err
+	}
+	if _, err := cursor.ReadDocument(ctx, &result); err != nil {
+		return -1, err
+	}
+	return result.Count, nil
 }
 
 // getCollections returns the filtered collections for the given database.

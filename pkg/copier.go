@@ -28,14 +28,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
-	"github.com/briandowns/spinner"
 	"github.com/cenkalti/backoff"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/vbauerster/mpb/v5"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
@@ -88,8 +87,8 @@ type Config struct {
 // Dependencies defines dependencies for the copier.
 type Dependencies struct {
 	Logger   zerolog.Logger
-	Spinner  *spinner.Spinner
 	Verifier Verifier
+	progress *mpb.Progress
 }
 
 type copier struct {
@@ -135,7 +134,7 @@ func NewCopier(cfg Config, deps Dependencies) (Copier, error) {
 	}
 	// Set up spinner
 	if terminal.IsTerminal(int(os.Stdout.Fd())) {
-		c.Dependencies.Spinner = spinner.New(spinner.CharSets[34], 100*time.Millisecond)
+		c.progress = mpb.New(mpb.WithWidth(64))
 	}
 
 	// Set up filters
