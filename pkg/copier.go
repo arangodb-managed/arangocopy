@@ -91,7 +91,7 @@ type Config struct {
 type Dependencies struct {
 	Logger   zerolog.Logger
 	Verifier Verifier
-	progress *mpb.Progress
+	progress *mpb.Progress // nolint:structcheck
 }
 
 type copier struct {
@@ -277,8 +277,9 @@ func (c *copier) Copy() error {
 	}
 }
 
+// copy will start copying over data. Once it finishes or it encounters an error, it will signal the
+// parent routine that it's done either way.
 func (c *copier) copy(databases []driver.Database, ctx context.Context, log zerolog.Logger, doneDatabases chan string, doneCollections chan string, done chan error) {
-	// After verification finishes, perform the actual copy operation.
 	for _, db := range databases {
 		if err := c.copyDatabase(ctx, db); err != nil {
 			done <- err
@@ -344,7 +345,14 @@ func (c *copier) displaySummary(log zerolog.Logger, databases []string, collecti
 	if len(collections) > 0 {
 		log.Info().Strs("collections", collections).Msg("Done with the following collections")
 		// append the newly done collections to the existing excludes
-		c.ExcludedCollections = append(c.ExcludedCollections, collections...)
+		for _, coll := range collections {
+			split := strings.Split(coll, "/")
+			// if the whole database is ignored, there is no point in adding this collection
+			// to the exclude list.
+			if !containsDatabase(split[0], c.ExcludedDatabases) {
+				c.ExcludedCollections = append(c.ExcludedCollections, coll)
+			}
+		}
 		filters += " --exclude-collection " + strings.Join(c.ExcludedCollections, ",")
 	}
 	if filters != "" {
@@ -352,4 +360,14 @@ func (c *copier) displaySummary(log zerolog.Logger, databases []string, collecti
 	} else {
 		log.Info().Msg("No collections or databases have finished copying over yet.")
 	}
+}
+
+// containsDatabase checks if a list database names contains a database name.
+func containsDatabase(db string, dbs []string) bool {
+	for _, d := range dbs {
+		if d == db {
+			return true
+		}
+	}
+	return false
 }

@@ -151,7 +151,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 			var bar *mpb.Bar
 			if c.progress != nil {
 				bar = c.progress.AddBar(int64(docCount), mpb.PrependDecorators(
-					decor.Name(""),
+					decor.Name(db.Name()+"/"+sourceColl.Name()+": "),
 					decor.NewPercentage("%d"),
 				),
 					mpb.AppendDecorators(
@@ -159,7 +159,8 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 						decor.OnComplete(
 							decor.AverageETA(decor.ET_STYLE_GO), "done",
 						),
-					))
+					),
+					mpb.BarRemoveOnComplete())
 			}
 			for {
 				var (
@@ -202,7 +203,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 			if bar != nil {
 				bar.Completed()
 			}
-			doneCollections <- sourceColl.Name()
+			doneCollections <- db.Name() + "/" + sourceColl.Name()
 			return nil
 		})
 	}
@@ -284,7 +285,7 @@ func (c *copier) getCollections(ctx context.Context, db driver.Database) ([]driv
 	}); err != nil {
 		return nil, err
 	}
-	collections = c.filterCollections(collections)
+	collections = c.filterCollections(collections, db.Name())
 	return collections, nil
 }
 

@@ -31,7 +31,7 @@ import (
 func (c *copier) filterDatabases(items []driver.Database) []driver.Database {
 	ret := make([]driver.Database, 0)
 	for _, item := range items {
-		if ok := isIncluded(item.Name(), c.databaseInclude, c.databaseExclude); ok {
+		if ok := isIncluded(item.Name(), c.databaseInclude, c.databaseExclude, ""); ok {
 			ret = append(ret, item)
 		}
 	}
@@ -40,10 +40,10 @@ func (c *copier) filterDatabases(items []driver.Database) []driver.Database {
 
 // filterCollections takes a list of collections and filters it according to the set up
 // included and excluded filters.
-func (c *copier) filterCollections(items []driver.Collection) []driver.Collection {
+func (c *copier) filterCollections(items []driver.Collection, db string) []driver.Collection {
 	ret := make([]driver.Collection, 0)
 	for _, item := range items {
-		if ok := isIncluded(item.Name(), c.collectionInclude, c.collectionExclude); ok {
+		if ok := isIncluded(item.Name(), c.collectionInclude, c.collectionExclude, db); ok {
 			ret = append(ret, item)
 		}
 	}
@@ -52,10 +52,10 @@ func (c *copier) filterCollections(items []driver.Collection) []driver.Collectio
 
 // filterViews takes a list of views and filters it according to the set up
 // included and excluded filters.
-func (c *copier) filterViews(items []driver.View) []driver.View {
+func (c *copier) filterViews(items []driver.View, db string) []driver.View {
 	ret := make([]driver.View, 0)
 	for _, item := range items {
-		if ok := isIncluded(item.Name(), c.viewInclude, c.viewExclude); ok {
+		if ok := isIncluded(item.Name(), c.viewInclude, c.viewExclude, db); ok {
 			ret = append(ret, item)
 		}
 	}
@@ -64,28 +64,37 @@ func (c *copier) filterViews(items []driver.View) []driver.View {
 
 // filterGraphs takes a list of graphs and filters it according to the set up
 // included and excluded filters.
-func (c *copier) filterGraphs(items []driver.Graph) []driver.Graph {
+func (c *copier) filterGraphs(items []driver.Graph, db string) []driver.Graph {
 	ret := make([]driver.Graph, 0)
 	for _, item := range items {
-		if ok := isIncluded(item.Name(), c.graphInclude, c.graphExclude); ok {
+		if ok := isIncluded(item.Name(), c.graphInclude, c.graphExclude, db); ok {
 			ret = append(ret, item)
 		}
 	}
 	return ret
 }
 
-// isIncluded will decide if an item with a given name should be included or excluded. This can be extended to do
-// different kind of name matchings like partial or regex.
+// isIncluded will decide if an item with a given name should be included or excluded.
+// First, it will try to find an item by its name only, in which case it will be included
+// or excluded globally. Then it will try to find an item for a specific database pattern
+// using `db/name`. If found, it will be included or excluded for that database only.
+// This can be extended to do different kind of name matchings like partial or regex.
 // If data is included in both, include and exclude, it will be excluded.
-// name, include, exclude
-func isIncluded(name string, include, exclude map[string]struct{}) (included bool) {
+// name, include, exclude, db
+func isIncluded(name string, include, exclude map[string]struct{}, db string) (included bool) {
 	if len(include) > 0 {
 		_, ok := include[name]
 		included = ok
+		if !ok {
+			_, ok := include[db+"/"+name]
+			included = ok
+		}
 	} else {
 		included = true
 	}
 	if _, ok := exclude[name]; ok {
+		included = false
+	} else if _, ok := exclude[db+"/"+name]; ok {
 		included = false
 	}
 	return
