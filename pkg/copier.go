@@ -260,12 +260,10 @@ func (c *copier) Copy() error {
 	for {
 		select {
 		case err := <-done:
-			cont := false
 			if err != nil {
 				c.Logger.Error().Err(err).Msg("Failed to copy over data.")
-				cont = true
+				c.displaySummary(log, doneDatabases, doneCollections)
 			}
-			c.displaySummary(log, doneDatabases, doneCollections, cont)
 			return err
 		case c := <-doneCollection:
 			doneCollections = append(doneCollections, c)
@@ -273,8 +271,8 @@ func (c *copier) Copy() error {
 			doneDatabases = append(doneDatabases, d)
 		case s := <-sigs:
 			log.Debug().Str("signal", s.String()).Msg("Interrupt received. Displaying continue information.")
-			c.displaySummary(log, doneDatabases, doneCollections, true)
-			return nil
+			c.displaySummary(log, doneDatabases, doneCollections)
+			return errors.New("process interrupted by user")
 		}
 	}
 }
@@ -335,14 +333,23 @@ func (c *copier) backoffCall(ctx context.Context, f func() error) error {
 }
 
 // displaySummary displays a summary of what has already been done.
-func (c *copier) displaySummary(log zerolog.Logger, databases []string, collections []string, cont bool) {
-	log.Info().Strs("databases", databases).Msg("Done with the following databases")
-	log.Info().Strs("collections", collections).Msg("Done with the following collections")
-
-	if cont {
-		log.Info().Msg("To continue by excluding already done items, use the following exclude filters:")
-		colls := strings.Join(collections, ",")
-		dbs := strings.Join(databases, ",")
-		log.Info().Msgf("--excluded-database %s --excluded-collection %s", dbs, colls)
+func (c *copier) displaySummary(log zerolog.Logger, databases []string, collections []string) {
+	var filters string
+	if len(databases) > 0 {
+		log.Info().Strs("databases", databases).Msg("Done with the following databases")
+		// append the newly done databases to the existing excludes
+		c.ExcludedDatabases = append(c.ExcludedDatabases, databases...)
+		filters += "--exclude-database " + strings.Join(c.ExcludedDatabases, ",")
+	}
+	if len(collections) > 0 {
+		log.Info().Strs("collections", collections).Msg("Done with the following collections")
+		// append the newly done collections to the existing excludes
+		c.ExcludedCollections = append(c.ExcludedCollections, collections...)
+		filters += " --exclude-collection " + strings.Join(c.ExcludedCollections, ",")
+	}
+	if filters != "" {
+		log.Info().Msgf("To continue by excluding already done items, use the following exclude filters: %s", filters)
+	} else {
+		log.Info().Msg("No collections or databases have finished copying over yet.")
 	}
 }
