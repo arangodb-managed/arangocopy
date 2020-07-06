@@ -29,7 +29,7 @@ import "github.com/arangodb/go-driver"
 func (c *copier) filterDatabases(items []driver.Database) []driver.Database {
 	ret := make([]driver.Database, 0)
 	for _, item := range items {
-		if ok := isIncluded(item.Name(), c.graphInclude, c.graphExclude); ok {
+		if ok := isIncluded(item.Name(), c.databaseInclude, c.databaseExclude); ok {
 			ret = append(ret, item)
 		}
 	}
@@ -41,7 +41,7 @@ func (c *copier) filterDatabases(items []driver.Database) []driver.Database {
 func (c *copier) filterCollections(items []driver.Collection) []driver.Collection {
 	ret := make([]driver.Collection, 0)
 	for _, item := range items {
-		if ok := isIncluded(item.Name(), c.graphInclude, c.graphExclude); ok {
+		if ok := isIncluded(item.Name(), c.collectionInclude, c.collectionExclude); ok {
 			ret = append(ret, item)
 		}
 	}
@@ -53,7 +53,7 @@ func (c *copier) filterCollections(items []driver.Collection) []driver.Collectio
 func (c *copier) filterViews(items []driver.View) []driver.View {
 	ret := make([]driver.View, 0)
 	for _, item := range items {
-		if ok := isIncluded(item.Name(), c.graphInclude, c.graphExclude); ok {
+		if ok := isIncluded(item.Name(), c.viewInclude, c.viewExclude); ok {
 			ret = append(ret, item)
 		}
 	}
