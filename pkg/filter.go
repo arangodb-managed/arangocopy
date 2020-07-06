@@ -76,7 +76,7 @@ func (c *copier) filterGraphs(items []driver.Graph, db string) []driver.Graph {
 
 // isIncluded will decide if an item with a given name should be included or excluded.
 // First, it will try to find an item by its name only, in which case it will be included
-// or excluded globally. Then it will try to find an item for a specific database pattern
+// or excluded for all databases. Then it will try to find an item for a specific database pattern
 // using `db/name`. If found, it will be included or excluded for that database only.
 // This can be extended to do different kind of name matchings like partial or regex.
 // If data is included in both, include and exclude, it will be excluded.
