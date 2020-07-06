@@ -28,6 +28,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
@@ -242,27 +245,66 @@ func (c *copier) Copy() error {
 	}
 	c.Logger.Info().Msg("Verification passed. Commencing copy operation.")
 
+	// Create a signal capture
+	sigs := make(chan os.Signal, 1)
+	done := make(chan error, 1)
+	doneDatabases := make([]string, 0)
+	doneCollections := make([]string, 0)
+	doneCollection := make(chan string)
+	doneDatabase := make(chan string)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	// start the copy routine
+	go c.copy(databases, ctx, log, doneDatabase, doneCollection, done)
+
+	for {
+		select {
+		case err := <-done:
+			cont := false
+			if err != nil {
+				c.Logger.Error().Err(err).Msg("Failed to copy over data.")
+				cont = true
+			}
+			c.displaySummary(log, doneDatabases, doneCollections, cont)
+			return err
+		case c := <-doneCollection:
+			doneCollections = append(doneCollections, c)
+		case d := <-doneDatabase:
+			doneDatabases = append(doneDatabases, d)
+		case s := <-sigs:
+			log.Debug().Str("signal", s.String()).Msg("Interrupt received. Displaying continue information.")
+			c.displaySummary(log, doneDatabases, doneCollections, true)
+			return nil
+		}
+	}
+}
+
+func (c *copier) copy(databases []driver.Database, ctx context.Context, log zerolog.Logger, doneDatabases chan string, doneCollections chan string, done chan error) {
 	// After verification finishes, perform the actual copy operation.
 	for _, db := range databases {
 		if err := c.copyDatabase(ctx, db); err != nil {
-			return err
+			done <- err
+			return
 		}
 		log.Info().Msg("Done with databases.")
-		if err := c.copyCollections(ctx, db); err != nil {
-			return err
+		if err := c.copyCollections(ctx, db, doneCollections); err != nil {
+			done <- err
+			return
 		}
 		log.Info().Msg("Done with collections.")
 		if err := c.copyViews(ctx, db); err != nil {
-			return err
+			done <- err
+			return
 		}
 		log.Info().Msg("Done with viewes.")
 		if err := c.copyGraphs(ctx, db); err != nil {
-			return err
+			done <- err
+			return
 		}
 		log.Info().Msg("Done with graphs.")
+		doneDatabases <- db.Name()
 	}
-
-	return nil
+	done <- nil
 }
 
 // displayConfirmation will only display the confirm question if the terminal is an interactive one.
@@ -290,4 +332,17 @@ func (c *copier) backoffCall(ctx context.Context, f func() error) error {
 		return err
 	}
 	return nil
+}
+
+// displaySummary displays a summary of what has already been done.
+func (c *copier) displaySummary(log zerolog.Logger, databases []string, collections []string, cont bool) {
+	log.Info().Strs("databases", databases).Msg("Done with the following databases")
+	log.Info().Strs("collections", collections).Msg("Done with the following collections")
+
+	if cont {
+		log.Info().Msg("To continue by excluding already done items, use the following exclude filters:")
+		colls := strings.Join(collections, ",")
+		dbs := strings.Join(databases, ",")
+		log.Info().Msgf("--excluded-database %s --excluded-collection %s", dbs, colls)
+	}
 }

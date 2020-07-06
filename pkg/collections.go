@@ -38,7 +38,7 @@ import (
 )
 
 // copyCollections copies all collections for a database.
-func (c *copier) copyCollections(ctx context.Context, db driver.Database) error {
+func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCollections chan string) error {
 	log := c.Logger
 	log.Info().Msg("Beginning to copy over collection data.")
 	var destinationDB driver.Database
@@ -202,6 +202,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			if bar != nil {
 				bar.Completed()
 			}
+			doneCollections <- sourceColl.Name()
 			return nil
 		})
 	}
