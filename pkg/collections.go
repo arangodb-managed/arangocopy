@@ -38,7 +38,7 @@ import (
 )
 
 // copyCollections copies all collections for a database.
-func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCollections chan string) error {
+func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCollections chan databaseAndCollections) error {
 	log := c.Logger
 	log.Info().Msg("Beginning to copy over collection data.")
 	var destinationDB driver.Database
@@ -144,8 +144,18 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 			}
 			defer cursor.Close()
 			batch := make([]interface{}, 0, c.BatchSize)
-			docCount, err := c.countDocuments(readCtx, sourceColl)
-			if err != nil {
+			var docCount int
+
+			if err := c.backoffCall(readCtx, func() error {
+				count, err := c.countDocuments(readCtx, sourceColl)
+				if err != nil {
+					c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Failed to count documents in collection.")
+					return err
+				}
+				docCount = count
+				return nil
+			}); err != nil {
+				c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Counting eventually failed.")
 				return err
 			}
 			var bar *mpb.Bar
@@ -203,7 +213,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 			if bar != nil {
 				bar.Completed()
 			}
-			doneCollections <- db.Name() + "/" + sourceColl.Name()
+			doneCollections <- databaseAndCollections{collectionName: db.Name() + "/" + sourceColl.Name()}
 			return nil
 		})
 	}

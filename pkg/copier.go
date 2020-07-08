@@ -109,6 +109,12 @@ type copier struct {
 	graphExclude      map[string]struct{}
 }
 
+// databaseAndCollections is the type of the done channel for copying data across.
+type databaseAndCollections = struct {
+	databaseName   string
+	collectionName string
+}
+
 // NewCopier returns a new copier with given a given set of configurations.
 func NewCopier(cfg Config, deps Dependencies) (Copier, error) {
 	c := &copier{
@@ -250,12 +256,11 @@ func (c *copier) Copy() error {
 	done := make(chan error, 1)
 	doneDatabases := make([]string, 0)
 	doneCollections := make([]string, 0)
-	doneCollection := make(chan string)
-	doneDatabase := make(chan string)
+	doneDatabaseAndCollection := make(chan databaseAndCollections)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
 	// start the copy routine
-	go c.copy(databases, ctx, log, doneDatabase, doneCollection, done)
+	go c.copy(databases, ctx, log, doneDatabaseAndCollection, done)
 
 	for {
 		select {
@@ -265,10 +270,13 @@ func (c *copier) Copy() error {
 				c.displaySummary(log, doneDatabases, doneCollections)
 			}
 			return err
-		case c := <-doneCollection:
-			doneCollections = append(doneCollections, c)
-		case d := <-doneDatabase:
-			doneDatabases = append(doneDatabases, d)
+		case c := <-doneDatabaseAndCollection:
+			if c.collectionName != "" {
+				doneCollections = append(doneCollections, c.collectionName)
+			}
+			if c.databaseName != "" {
+				doneDatabases = append(doneDatabases, c.databaseName)
+			}
 		case s := <-sigs:
 			log.Debug().Str("signal", s.String()).Msg("Interrupt received. Displaying continue information.")
 			c.displaySummary(log, doneDatabases, doneCollections)
@@ -279,14 +287,14 @@ func (c *copier) Copy() error {
 
 // copy will start copying over data. Once it finishes or it encounters an error, it will signal the
 // parent routine that it's done either way.
-func (c *copier) copy(databases []driver.Database, ctx context.Context, log zerolog.Logger, doneDatabases chan string, doneCollections chan string, done chan error) {
+func (c *copier) copy(databases []driver.Database, ctx context.Context, log zerolog.Logger, doneDatabaseAndCollection chan databaseAndCollections, done chan error) {
 	for _, db := range databases {
 		if err := c.copyDatabase(ctx, db); err != nil {
 			done <- err
 			return
 		}
 		log.Info().Msg("Done with databases.")
-		if err := c.copyCollections(ctx, db, doneCollections); err != nil {
+		if err := c.copyCollections(ctx, db, doneDatabaseAndCollection); err != nil {
 			done <- err
 			return
 		}
@@ -301,7 +309,7 @@ func (c *copier) copy(databases []driver.Database, ctx context.Context, log zero
 			return
 		}
 		log.Info().Msg("Done with graphs.")
-		doneDatabases <- db.Name()
+		doneDatabaseAndCollection <- databaseAndCollections{databaseName: db.Name()}
 	}
 	done <- nil
 }
