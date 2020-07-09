@@ -109,9 +109,12 @@ type copier struct {
 	graphExclude      map[string]struct{}
 }
 
-// databaseAndCollections is the type of the done channel for copying data across.
+// databaseAndCollections is the type of the done channel for copying data across. At any
+// time, either databaseName or collectionName is provided by the channel.
 type databaseAndCollections = struct {
-	databaseName   string
+	// This field can be empty.
+	databaseName string
+	// This field can be empty.
 	collectionName string
 }
 
@@ -260,7 +263,7 @@ func (c *copier) Copy() error {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
 	// start the copy routine
-	go c.copy(databases, ctx, log, doneDatabaseAndCollection, done)
+	go c.copy(ctx, databases, log, doneDatabaseAndCollection, done)
 
 	for {
 		select {
@@ -287,7 +290,7 @@ func (c *copier) Copy() error {
 
 // copy will start copying over data. Once it finishes or it encounters an error, it will signal the
 // parent routine that it's done either way.
-func (c *copier) copy(databases []driver.Database, ctx context.Context, log zerolog.Logger, doneDatabaseAndCollection chan databaseAndCollections, done chan error) {
+func (c *copier) copy(ctx context.Context, databases []driver.Database, log zerolog.Logger, doneDatabaseAndCollection chan databaseAndCollections, done chan error) {
 	for _, db := range databases {
 		if err := c.copyDatabase(ctx, db); err != nil {
 			done <- err
