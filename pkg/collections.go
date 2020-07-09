@@ -25,7 +25,11 @@ package pkg
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
+
+	"github.com/vbauerster/mpb/v5"
+	"github.com/vbauerster/mpb/v5/decor"
 
 	"github.com/arangodb/go-driver"
 	"github.com/rs/zerolog/log"
@@ -34,7 +38,7 @@ import (
 )
 
 // copyCollections copies all collections for a database.
-func (c *copier) copyCollections(ctx context.Context, db driver.Database) error {
+func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCollections chan databaseAndCollections) error {
 	log := c.Logger
 	log.Info().Msg("Beginning to copy over collection data.")
 	var destinationDB driver.Database
@@ -81,10 +85,6 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 	restoreCtx := driver.WithIsRestore(ctx, true)
 	var g errgroup.Group
 	sem := semaphore.NewWeighted(int64(c.MaximumParallelCollections))
-	if c.Dependencies.Spinner != nil {
-		c.Dependencies.Spinner.Start()
-	}
-
 	// Create the collections sequentially here
 	for _, sourceColl := range collections {
 		if err := c.createCollection(restoreCtx, destinationDB, sourceColl, propsMap[sourceColl.Name()]); err != nil {
@@ -92,7 +92,6 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			return err
 		}
 	}
-
 	// Start the data copy operation
 	for _, sourceColl := range collections {
 		sourceColl := sourceColl
@@ -111,12 +110,11 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				// skip system collections
 				return nil
 			}
-
 			var destinationColl driver.Collection
 			if err := c.backoffCall(ctx, func() error {
 				dColl, err := destinationDB.Collection(ctx, sourceColl.Name())
 				if err != nil {
-					c.Logger.Error().Err(err).Msg("Failed to ensure destination collection.")
+					c.Logger.Error().Err(err).Msg("Failed to find destination collection.")
 					return err
 				}
 				destinationColl = dColl
@@ -124,13 +122,11 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			}); err != nil {
 				return err
 			}
-
 			// Copy over all indexes for this collection.
 			if err := c.copyIndexes(restoreCtx, sourceColl, destinationColl); err != nil {
 				c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Failed to copy all indexes.")
 				return err
 			}
-
 			bindVars := map[string]interface{}{
 				"@c": sourceColl.Name(),
 			}
@@ -148,6 +144,34 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 			}
 			defer cursor.Close()
 			batch := make([]interface{}, 0, c.BatchSize)
+			var docCount int
+
+			if err := c.backoffCall(readCtx, func() error {
+				count, err := c.countDocuments(readCtx, sourceColl)
+				if err != nil {
+					c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Failed to count documents in collection.")
+					return err
+				}
+				docCount = count
+				return nil
+			}); err != nil {
+				c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Counting eventually failed.")
+				return err
+			}
+			var bar *mpb.Bar
+			if c.progress != nil {
+				bar = c.progress.AddBar(int64(docCount), mpb.PrependDecorators(
+					decor.Name(db.Name()+"/"+sourceColl.Name()+": "),
+					decor.NewPercentage("%d"),
+				),
+					mpb.AppendDecorators(
+						decor.Name("ETA: "),
+						decor.OnComplete(
+							decor.AverageETA(decor.ET_STYLE_GO), "done",
+						),
+					),
+					mpb.BarRemoveOnComplete())
+			}
 			for {
 				var (
 					d           interface{}
@@ -166,7 +190,6 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 				}); err != nil {
 					return err
 				}
-
 				if (noMoreError && len(batch) > 0) || len(batch) >= c.BatchSize {
 					if err := c.backoffCall(ctx, func() error {
 						if _, _, err := destinationColl.CreateDocuments(restoreCtx, batch); err != nil {
@@ -174,6 +197,9 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 							return err
 						}
 						batch = make([]interface{}, 0, c.BatchSize)
+						if bar != nil {
+							bar.IncrBy(c.BatchSize)
+						}
 						return nil
 					}); err != nil {
 						return err
@@ -184,15 +210,16 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database) error 
 					break
 				}
 			}
+			if bar != nil {
+				bar.Completed()
+			}
+			doneCollections <- databaseAndCollections{collectionName: db.Name() + "/" + sourceColl.Name()}
 			return nil
 		})
 	}
 	if err := g.Wait(); err != nil {
 		log.Error().Err(err).Msg("One of the workers failed to copy data.")
 		return err
-	}
-	if c.Dependencies.Spinner != nil {
-		c.Dependencies.Spinner.Stop()
 	}
 	log.Debug().Str("source-database", db.Name()).Msg("Done copying database data.")
 	return nil
@@ -237,6 +264,22 @@ func (c *copier) verifyCollections(ctx context.Context, db driver.Database) erro
 	return nil
 }
 
+// countDocuments takes a collection and returns the number of documents in it.
+func (c *copier) countDocuments(ctx context.Context, collection driver.Collection) (int, error) {
+	var result = struct {
+		Count int `json:"count"`
+	}{}
+	verify := fmt.Sprintf("RETURN { count: LENGTH(%s) }", collection.Name())
+	cursor, err := collection.Database().Query(ctx, verify, nil)
+	if err != nil {
+		return -1, err
+	}
+	if _, err := cursor.ReadDocument(ctx, &result); err != nil {
+		return -1, err
+	}
+	return result.Count, nil
+}
+
 // getCollections returns the filtered collections for the given database.
 func (c *copier) getCollections(ctx context.Context, db driver.Database) ([]driver.Collection, error) {
 	log := c.Logger
@@ -252,7 +295,7 @@ func (c *copier) getCollections(ctx context.Context, db driver.Database) ([]driv
 	}); err != nil {
 		return nil, err
 	}
-	collections = c.filterCollections(collections)
+	collections = c.filterCollections(collections, db.Name())
 	return collections, nil
 }
 
@@ -400,6 +443,7 @@ func (c *copier) createCollection(ctx context.Context, db driver.Database, coll 
 	}
 	if err := c.backoffCall(ctx, func() error {
 		if _, err := db.CreateCollection(ctx, coll.Name(), options); err != nil {
+			c.Logger.Warn().Interface("options", options).Msg("CreateCollection failed with the following options.")
 			return err
 		}
 		return nil

@@ -28,14 +28,16 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
+	"os/signal"
+	"strings"
+	"syscall"
 
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
-	"github.com/briandowns/spinner"
 	"github.com/cenkalti/backoff"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/vbauerster/mpb/v5"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
@@ -88,8 +90,8 @@ type Config struct {
 // Dependencies defines dependencies for the copier.
 type Dependencies struct {
 	Logger   zerolog.Logger
-	Spinner  *spinner.Spinner
 	Verifier Verifier
+	progress *mpb.Progress // nolint:structcheck
 }
 
 type copier struct {
@@ -107,12 +109,27 @@ type copier struct {
 	graphExclude      map[string]struct{}
 }
 
+// databaseAndCollections is the type of the done channel for copying data across. At any
+// time, either databaseName or collectionName is provided by the channel.
+type databaseAndCollections = struct {
+	// This field can be empty.
+	databaseName string
+	// This field can be empty.
+	collectionName string
+}
+
 // NewCopier returns a new copier with given a given set of configurations.
 func NewCopier(cfg Config, deps Dependencies) (Copier, error) {
 	c := &copier{
 		Config:       cfg,
 		Dependencies: deps,
 	}
+
+	if deps.Verifier == nil {
+		c.Logger.Error().Msg("Please provide a verifier.")
+		return nil, errors.New("verifier missing")
+	}
+
 	// Set up source client.
 	if client, err := c.getClient("Source", cfg.Source.Address, cfg.Source.Username, cfg.Source.Password); err != nil {
 		c.Logger.Error().Err(err).Msg("Failed to connect to source address.")
@@ -129,7 +146,7 @@ func NewCopier(cfg Config, deps Dependencies) (Copier, error) {
 	}
 	// Set up spinner
 	if terminal.IsTerminal(int(os.Stdout.Fd())) {
-		c.Dependencies.Spinner = spinner.New(spinner.CharSets[34], 100*time.Millisecond)
+		c.progress = mpb.New(mpb.WithWidth(64))
 	}
 
 	// Set up filters
@@ -237,27 +254,67 @@ func (c *copier) Copy() error {
 	}
 	c.Logger.Info().Msg("Verification passed. Commencing copy operation.")
 
-	// After verification finishes, perform the actual copy operation.
+	// Create a signal capture
+	sigs := make(chan os.Signal, 1)
+	done := make(chan error, 1)
+	doneDatabases := make([]string, 0)
+	doneCollections := make([]string, 0)
+	doneDatabaseAndCollection := make(chan databaseAndCollections)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	// start the copy routine
+	go c.copy(ctx, databases, log, doneDatabaseAndCollection, done)
+
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				c.Logger.Error().Err(err).Msg("Failed to copy over data.")
+				c.displaySummary(log, doneDatabases, doneCollections)
+			}
+			return err
+		case c := <-doneDatabaseAndCollection:
+			if c.collectionName != "" {
+				doneCollections = append(doneCollections, c.collectionName)
+			}
+			if c.databaseName != "" {
+				doneDatabases = append(doneDatabases, c.databaseName)
+			}
+		case s := <-sigs:
+			log.Debug().Str("signal", s.String()).Msg("Interrupt received. Displaying continue information.")
+			c.displaySummary(log, doneDatabases, doneCollections)
+			return errors.New("process interrupted by user")
+		}
+	}
+}
+
+// copy will start copying over data. Once it finishes or it encounters an error, it will signal the
+// parent routine that it's done either way.
+func (c *copier) copy(ctx context.Context, databases []driver.Database, log zerolog.Logger, doneDatabaseAndCollection chan databaseAndCollections, done chan error) {
 	for _, db := range databases {
 		if err := c.copyDatabase(ctx, db); err != nil {
-			return err
+			done <- err
+			return
 		}
 		log.Info().Msg("Done with databases.")
-		if err := c.copyCollections(ctx, db); err != nil {
-			return err
+		if err := c.copyCollections(ctx, db, doneDatabaseAndCollection); err != nil {
+			done <- err
+			return
 		}
 		log.Info().Msg("Done with collections.")
 		if err := c.copyViews(ctx, db); err != nil {
-			return err
+			done <- err
+			return
 		}
 		log.Info().Msg("Done with viewes.")
 		if err := c.copyGraphs(ctx, db); err != nil {
-			return err
+			done <- err
+			return
 		}
 		log.Info().Msg("Done with graphs.")
+		doneDatabaseAndCollection <- databaseAndCollections{databaseName: db.Name()}
 	}
-
-	return nil
+	done <- nil
 }
 
 // displayConfirmation will only display the confirm question if the terminal is an interactive one.
@@ -285,4 +342,43 @@ func (c *copier) backoffCall(ctx context.Context, f func() error) error {
 		return err
 	}
 	return nil
+}
+
+// displaySummary displays a summary of what has already been done.
+func (c *copier) displaySummary(log zerolog.Logger, databases []string, collections []string) {
+	var filters string
+	if len(databases) > 0 {
+		log.Info().Strs("databases", databases).Msg("Done with the following databases")
+		// append the newly done databases to the existing excludes
+		c.ExcludedDatabases = append(c.ExcludedDatabases, databases...)
+		filters += "--exclude-database " + strings.Join(c.ExcludedDatabases, ",")
+	}
+	if len(collections) > 0 {
+		log.Info().Strs("collections", collections).Msg("Done with the following collections")
+		// append the newly done collections to the existing excludes
+		for _, coll := range collections {
+			split := strings.Split(coll, "/")
+			// if the whole database is ignored, there is no point in adding this collection
+			// to the exclude list.
+			if !containsDatabase(split[0], c.ExcludedDatabases) {
+				c.ExcludedCollections = append(c.ExcludedCollections, coll)
+			}
+		}
+		filters += " --exclude-collection " + strings.Join(c.ExcludedCollections, ",")
+	}
+	if filters != "" {
+		log.Info().Msgf("To continue by excluding already done items, use the following exclude filters: %s", filters)
+	} else {
+		log.Info().Msg("No collections or databases have finished copying over yet.")
+	}
+}
+
+// containsDatabase checks if a list database names contains a database name.
+func containsDatabase(db string, dbs []string) bool {
+	for _, d := range dbs {
+		if d == db {
+			return true
+		}
+	}
+	return false
 }

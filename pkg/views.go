@@ -136,6 +136,6 @@ func (c *copier) getViews(ctx context.Context, db driver.Database) ([]driver.Vie
 	}); err != nil {
 		return nil, err
 	}
-	views = c.filterViews(views)
+	views = c.filterViews(views, db.Name())
 	return views, nil
 }

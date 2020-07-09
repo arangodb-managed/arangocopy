@@ -72,13 +72,13 @@ func init() {
 	f.StringVar(&RootArgs.destination.Password, "destination-password", "", "Destination database password if required.")
 	f.IntVarP(&RootArgs.maxParallelCollections, "maximum-parallel-collections", "m", 10, "Maximum number of collections being copied in parallel.")
 	f.StringSliceVar(&RootArgs.includedDatabases, "included-database", []string{}, "A list of database names which should be included. If provided, only these databases will be copied.")
-	f.StringSliceVar(&RootArgs.excludedDatabases, "exluded-database", []string{}, "A list of database names which should be excluded. Exclusion takes priority over inclusion.")
-	f.StringSliceVar(&RootArgs.includedCollections, "included-collection", []string{}, "A list of collection names which should be included. If provided, only these collections will be copied.")
-	f.StringSliceVar(&RootArgs.excludedCollections, "excluded-collection", []string{}, "A list of collections names which should be excluded. Exclusion takes priority over inclusion.")
-	f.StringSliceVar(&RootArgs.includedViews, "included-view", []string{}, "A list of view names which should be included. If provided, only these views will be copied.")
-	f.StringSliceVar(&RootArgs.excludedViews, "excluded-view", []string{}, "A list of view names which should be excluded. Exclusion takes priority over inclusion.")
-	f.StringSliceVar(&RootArgs.includedGraphs, "included-graph", []string{}, "A list of graph names which should be included. If provided, only these graphs will be copied.")
-	f.StringSliceVar(&RootArgs.excludedGraphs, "excluded-graph", []string{}, "A list of graph names which should be excluded. Exclusion takes priority over inclusion.")
+	f.StringSliceVar(&RootArgs.excludedDatabases, "excluded-database", []string{}, "A list of database names which should be excluded. Exclusion takes priority over inclusion.")
+	f.StringSliceVar(&RootArgs.includedCollections, "included-collection", []string{}, "A list of collection names which should be included. If provided, only these collections will be copied. To target a specific database, use dbName/collectionName.")
+	f.StringSliceVar(&RootArgs.excludedCollections, "excluded-collection", []string{}, "A list of collections names which should be excluded. Exclusion takes priority over inclusion. To target a specific database, use dbName/collectionName.")
+	f.StringSliceVar(&RootArgs.includedViews, "included-view", []string{}, "A list of view names which should be included. If provided, only these views will be copied. To target a specific database, use dbName/viewName.")
+	f.StringSliceVar(&RootArgs.excludedViews, "excluded-view", []string{}, "A list of view names which should be excluded. Exclusion takes priority over inclusion. To target a specific database, use dbName/viewName.")
+	f.StringSliceVar(&RootArgs.includedGraphs, "included-graph", []string{}, "A list of graph names which should be included. If provided, only these graphs will be copied. To target a specific database, use dbName/graphName.")
+	f.StringSliceVar(&RootArgs.excludedGraphs, "excluded-graph", []string{}, "A list of graph names which should be excluded. Exclusion takes priority over inclusion. To target a specific database, use dbName/graphName.")
 	f.BoolVarP(&RootArgs.force, "force", "f", false, "Force the copy automatically overwriting everything at destination.")
 	f.IntVarP(&RootArgs.batchSize, "batch-size", "b", 4096, "The number of documents to write at once.")
 	f.IntVarP(&RootArgs.maxRetries, "max-retries", "r", 9, "The number of maximum retries attempts. Increasing this number will also increase the exponential fallback timer.")
@@ -114,6 +114,10 @@ func run(cmd *cobra.Command, args []string) {
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to start copy operation.")
+	}
+
+	if RootArgs.maxParallelCollections < 1 {
+		log.Fatal().Err(err).Msg("maximum-parallel-collections cannot be below 1")
 	}
 
 	// Start copy operatio

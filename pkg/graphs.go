@@ -141,6 +141,6 @@ func (c *copier) getGraphs(ctx context.Context, source driver.Database) ([]drive
 	}); err != nil {
 		return nil, err
 	}
-	graphs = c.filterGraphs(graphs)
+	graphs = c.filterGraphs(graphs, source.Name())
 	return graphs, nil
 }
