@@ -82,6 +82,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 
 	readCtx := driver.WithQueryStream(ctx, true)
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
+	readCtx = driver.WithQueryTTL(readCtx, c.QueryTTL)
 	restoreCtx := driver.WithIsRestore(ctx, true)
 	var g errgroup.Group
 	sem := semaphore.NewWeighted(int64(c.MaximumParallelCollections))
@@ -144,8 +145,10 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 			}
 			defer cursor.Close()
 			batch := make([]interface{}, 0, c.BatchSize)
-			var docCount int
-
+			var (
+				docCount int
+				soFar    int
+			)
 			if err := c.backoffCall(readCtx, func() error {
 				count, err := c.countDocuments(readCtx, sourceColl)
 				if err != nil {
@@ -159,7 +162,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 				return err
 			}
 			var bar *mpb.Bar
-			if c.progress != nil {
+			if c.progress != nil && !c.SimpleProgress {
 				bar = c.progress.AddBar(int64(docCount), mpb.PrependDecorators(
 					decor.Name(db.Name()+"/"+sourceColl.Name()+": "),
 					decor.NewPercentage("%d"),
@@ -171,6 +174,8 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 						),
 					),
 					mpb.BarRemoveOnComplete())
+			} else if c.SimpleProgress {
+				c.Logger.Info().Msgf("[%d/%d] done from collection: %s", 0, docCount, sourceColl.Name())
 			}
 			for {
 				var (
@@ -197,8 +202,14 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 							return err
 						}
 						batch = make([]interface{}, 0, c.BatchSize)
-						if bar != nil {
+						if bar != nil && !c.SimpleProgress {
 							bar.IncrBy(c.BatchSize)
+						} else if c.SimpleProgress {
+							soFar += c.BatchSize
+							percentage := (float64(soFar) / float64(docCount)) * 100
+							if percentage < 100 {
+								c.Logger.Info().Msgf("[%d/%d] (%.2f%%) done from collection: %s", soFar, docCount, percentage, sourceColl.Name())
+							}
 						}
 						return nil
 					}); err != nil {
@@ -210,8 +221,10 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 					break
 				}
 			}
-			if bar != nil {
+			if bar != nil && !c.SimpleProgress {
 				bar.Completed()
+			} else if c.SimpleProgress {
+				c.Logger.Info().Msgf("done with collection %s", sourceColl.Name())
 			}
 			doneCollections <- databaseAndCollections{collectionName: db.Name() + "/" + sourceColl.Name()}
 			return nil

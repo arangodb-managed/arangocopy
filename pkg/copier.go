@@ -31,6 +31,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
@@ -85,6 +86,10 @@ type Config struct {
 	BatchSize int
 	// MaxRetries defines the number of retries the backoff will do.
 	MaxRetries int
+	// SimpleProgress defines a simplified progress without using sync update on the terminal for screen session and such.
+	SimpleProgress bool
+	// QueryTTL defines the ttl for queries and the cursor.
+	QueryTTL time.Duration
 }
 
 // Dependencies defines dependencies for the copier.
