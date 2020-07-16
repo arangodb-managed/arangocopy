@@ -86,8 +86,8 @@ type Config struct {
 	BatchSize int
 	// MaxRetries defines the number of retries the backoff will do.
 	MaxRetries int
-	// NoProgress disable the progress bar explicitly.
-	NoProgress bool
+	// NoProgressBar disable the progress bar but still have partial progress output.
+	NoProgressBar bool
 	// QueryTTL defines the ttl for queries and the cursor.
 	QueryTTL time.Duration
 }
@@ -150,7 +150,7 @@ func NewCopier(cfg Config, deps Dependencies) (Copier, error) {
 		c.destinationClient = client
 	}
 	// Set up spinner
-	if terminal.IsTerminal(int(os.Stdout.Fd())) && !c.NoProgress {
+	if terminal.IsTerminal(int(os.Stdout.Fd())) && !c.NoProgressBar {
 		c.progress = mpb.New(mpb.WithWidth(64))
 	}
 

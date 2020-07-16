@@ -167,7 +167,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 				halfNotified          bool
 				threeQuartersNotified bool
 			)
-			if c.progress != nil && !c.NoProgress {
+			if c.progress != nil && !c.NoProgressBar {
 				bar = c.progress.AddBar(int64(docCount), mpb.PrependDecorators(
 					decor.Name(db.Name()+"/"+sourceColl.Name()+": "),
 					decor.NewPercentage("%d"),
@@ -179,7 +179,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 						),
 					),
 					mpb.BarRemoveOnComplete())
-			} else if c.NoProgress {
+			} else if c.NoProgressBar {
 				c.Logger.Info().Msgf("starting with collection: %s", sourceColl.Name())
 			}
 			for {
@@ -207,9 +207,9 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 							return err
 						}
 						batch = make([]interface{}, 0, c.BatchSize)
-						if bar != nil && !c.NoProgress {
+						if bar != nil && !c.NoProgressBar {
 							bar.IncrBy(c.BatchSize)
-						} else if c.NoProgress {
+						} else if c.NoProgressBar {
 							soFar += c.BatchSize
 							percentage := (float64(soFar) / float64(docCount)) * 100
 							if percentage > 33 && percentage < 50 && !thirdNotified {
@@ -233,9 +233,9 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 					break
 				}
 			}
-			if bar != nil && !c.NoProgress {
+			if bar != nil && !c.NoProgressBar {
 				bar.Completed()
-			} else if c.NoProgress {
+			} else if c.NoProgressBar {
 				c.Logger.Info().Msgf("done with collection %s", sourceColl.Name())
 			}
 			doneCollections <- databaseAndCollections{collectionName: db.Name() + "/" + sourceColl.Name()}
