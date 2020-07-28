@@ -31,6 +31,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
@@ -85,6 +86,10 @@ type Config struct {
 	BatchSize int
 	// MaxRetries defines the number of retries the backoff will do.
 	MaxRetries int
+	// NoProgressBar disable the progress bar but still have partial progress output.
+	NoProgressBar bool
+	// QueryTTL defines the ttl for queries and the cursor.
+	QueryTTL time.Duration
 }
 
 // Dependencies defines dependencies for the copier.
@@ -145,7 +150,7 @@ func NewCopier(cfg Config, deps Dependencies) (Copier, error) {
 		c.destinationClient = client
 	}
 	// Set up spinner
-	if terminal.IsTerminal(int(os.Stdout.Fd())) {
+	if terminal.IsTerminal(int(os.Stdout.Fd())) && !c.NoProgressBar {
 		c.progress = mpb.New(mpb.WithWidth(64))
 	}
 

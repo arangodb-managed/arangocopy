@@ -24,6 +24,7 @@ package cmd
 
 import (
 	"os"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -59,6 +60,8 @@ var (
 		maxParallelCollections int
 		batchSize              int
 		maxRetries             int
+		noProgressBar          bool
+		queryTTL               time.Duration
 	}
 )
 
@@ -82,6 +85,8 @@ func init() {
 	f.BoolVarP(&RootArgs.force, "force", "f", false, "Force the copy automatically overwriting everything at destination.")
 	f.IntVarP(&RootArgs.batchSize, "batch-size", "b", 4096, "The number of documents to write at once.")
 	f.IntVarP(&RootArgs.maxRetries, "max-retries", "r", 9, "The number of maximum retries attempts. Increasing this number will also increase the exponential fallback timer.")
+	f.BoolVar(&RootArgs.noProgressBar, "no-progress-bar", false, "Disable the progress bar but still have partial progress output.")
+	f.DurationVar(&RootArgs.queryTTL, "query-ttl", time.Hour*2, "Cursor TTL defined as a duration.")
 }
 
 // run runs the copy operation.
@@ -108,6 +113,8 @@ func run(cmd *cobra.Command, args []string) {
 		IncludedCollections:        RootArgs.includedCollections,
 		ExcludedCollections:        RootArgs.excludedCollections,
 		MaximumParallelCollections: RootArgs.maxParallelCollections,
+		QueryTTL:                   RootArgs.queryTTL,
+		NoProgressBar:              RootArgs.noProgressBar,
 	}, pkg.Dependencies{
 		Logger:   CLILog,
 		Verifier: pkg.NewNoopVerifier(),

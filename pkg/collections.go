@@ -82,6 +82,7 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 
 	readCtx := driver.WithQueryStream(ctx, true)
 	readCtx = driver.WithQueryBatchSize(readCtx, c.BatchSize)
+	readCtx = driver.WithQueryTTL(readCtx, c.QueryTTL)
 	restoreCtx := driver.WithIsRestore(ctx, true)
 	var g errgroup.Group
 	sem := semaphore.NewWeighted(int64(c.MaximumParallelCollections))
@@ -144,8 +145,10 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 			}
 			defer cursor.Close()
 			batch := make([]interface{}, 0, c.BatchSize)
-			var docCount int
-
+			var (
+				docCount int
+				soFar    int
+			)
 			if err := c.backoffCall(readCtx, func() error {
 				count, err := c.countDocuments(readCtx, sourceColl)
 				if err != nil {
@@ -158,8 +161,13 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 				c.Logger.Error().Err(err).Str("collection", sourceColl.Name()).Msg("Counting eventually failed.")
 				return err
 			}
-			var bar *mpb.Bar
-			if c.progress != nil {
+			var (
+				bar                   *mpb.Bar
+				thirdNotified         bool
+				halfNotified          bool
+				threeQuartersNotified bool
+			)
+			if c.progress != nil && !c.NoProgressBar {
 				bar = c.progress.AddBar(int64(docCount), mpb.PrependDecorators(
 					decor.Name(db.Name()+"/"+sourceColl.Name()+": "),
 					decor.NewPercentage("%d"),
@@ -171,6 +179,8 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 						),
 					),
 					mpb.BarRemoveOnComplete())
+			} else if c.NoProgressBar {
+				c.Logger.Info().Msgf("starting with collection: %s", sourceColl.Name())
 			}
 			for {
 				var (
@@ -197,8 +207,21 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 							return err
 						}
 						batch = make([]interface{}, 0, c.BatchSize)
-						if bar != nil {
+						if bar != nil && !c.NoProgressBar {
 							bar.IncrBy(c.BatchSize)
+						} else if c.NoProgressBar {
+							soFar += c.BatchSize
+							percentage := (float64(soFar) / float64(docCount)) * 100
+							if percentage > 33 && percentage < 50 && !thirdNotified {
+								c.Logger.Info().Msgf("33%% done from collection: %s", sourceColl.Name())
+								thirdNotified = true
+							} else if percentage > 50 && percentage < 75 && !halfNotified {
+								c.Logger.Info().Msgf("50%% done from collection: %s", sourceColl.Name())
+								halfNotified = true
+							} else if percentage >= 75 && percentage < 100 && !threeQuartersNotified {
+								c.Logger.Info().Msgf("75%% done from collection: %s", sourceColl.Name())
+								threeQuartersNotified = true
+							}
 						}
 						return nil
 					}); err != nil {
@@ -210,8 +233,10 @@ func (c *copier) copyCollections(ctx context.Context, db driver.Database, doneCo
 					break
 				}
 			}
-			if bar != nil {
+			if bar != nil && !c.NoProgressBar {
 				bar.Completed()
+			} else if c.NoProgressBar {
+				c.Logger.Info().Msgf("done with collection %s", sourceColl.Name())
 			}
 			doneCollections <- databaseAndCollections{collectionName: db.Name() + "/" + sourceColl.Name()}
 			return nil
