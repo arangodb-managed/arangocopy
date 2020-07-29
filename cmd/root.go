@@ -58,6 +58,7 @@ var (
 		excludedGraphs         []string
 		force                  bool
 		maxParallelCollections int
+		maxParallelDatabases   int
 		batchSize              int
 		maxRetries             int
 		noProgressBar          bool
@@ -74,6 +75,7 @@ func init() {
 	f.StringVar(&RootArgs.destination.Username, "destination-username", "", "Destination database username if required.")
 	f.StringVar(&RootArgs.destination.Password, "destination-password", "", "Destination database password if required.")
 	f.IntVarP(&RootArgs.maxParallelCollections, "maximum-parallel-collections", "m", 10, "Maximum number of collections being copied in parallel.")
+	f.IntVar(&RootArgs.maxParallelDatabases, "maximum-parallel-databases", 1, "Maximum number of databases being copied in parallel.")
 	f.StringSliceVar(&RootArgs.includedDatabases, "included-database", []string{}, "A list of database names which should be included. If provided, only these databases will be copied.")
 	f.StringSliceVar(&RootArgs.excludedDatabases, "excluded-database", []string{}, "A list of database names which should be excluded. Exclusion takes priority over inclusion.")
 	f.StringSliceVar(&RootArgs.includedCollections, "included-collection", []string{}, "A list of collection names which should be included. If provided, only these collections will be copied. To target a specific database, use dbName/collectionName.")
@@ -113,6 +115,7 @@ func run(cmd *cobra.Command, args []string) {
 		IncludedCollections:        RootArgs.includedCollections,
 		ExcludedCollections:        RootArgs.excludedCollections,
 		MaximumParallelCollections: RootArgs.maxParallelCollections,
+		MaximumParallelDatabases:   RootArgs.maxParallelDatabases,
 		QueryTTL:                   RootArgs.queryTTL,
 		NoProgressBar:              RootArgs.noProgressBar,
 	}, pkg.Dependencies{

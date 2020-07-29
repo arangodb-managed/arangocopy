@@ -40,6 +40,8 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/vbauerster/mpb/v5"
 	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 // Copier copies database content from source address to destination address
@@ -82,6 +84,8 @@ type Config struct {
 	Force bool
 	// Number of parallel collection copies underway.
 	MaximumParallelCollections int
+	// Number of parallel databases copies underway.
+	MaximumParallelDatabases int
 	// The batch size of the cursor.
 	BatchSize int
 	// MaxRetries defines the number of retries the backoff will do.
@@ -296,28 +300,38 @@ func (c *copier) Copy() error {
 // copy will start copying over data. Once it finishes or it encounters an error, it will signal the
 // parent routine that it's done either way.
 func (c *copier) copy(ctx context.Context, databases []driver.Database, log zerolog.Logger, doneDatabaseAndCollection chan databaseAndCollections, done chan error) {
+	var g errgroup.Group
+	sem := semaphore.NewWeighted(int64(c.MaximumParallelDatabases))
 	for _, db := range databases {
-		if err := c.copyDatabase(ctx, db); err != nil {
-			done <- err
-			return
-		}
-		log.Info().Msg("Done with databases.")
-		if err := c.copyCollections(ctx, db, doneDatabaseAndCollection); err != nil {
-			done <- err
-			return
-		}
-		log.Info().Msg("Done with collections.")
-		if err := c.copyViews(ctx, db); err != nil {
-			done <- err
-			return
-		}
-		log.Info().Msg("Done with viewes.")
-		if err := c.copyGraphs(ctx, db); err != nil {
-			done <- err
-			return
-		}
-		log.Info().Msg("Done with graphs.")
-		doneDatabaseAndCollection <- databaseAndCollections{databaseName: db.Name()}
+		db := db
+		g.Go(func() error {
+			if err := sem.Acquire(ctx, 1); err != nil {
+				return err
+			}
+			defer sem.Release(1)
+			if err := c.copyDatabase(ctx, db); err != nil {
+				return err
+			}
+			log.Info().Msg("Done with databases.")
+			if err := c.copyCollections(ctx, db, doneDatabaseAndCollection); err != nil {
+				return err
+			}
+			log.Info().Msg("Done with collections.")
+			if err := c.copyViews(ctx, db); err != nil {
+				return err
+			}
+			log.Info().Msg("Done with viewes.")
+			if err := c.copyGraphs(ctx, db); err != nil {
+				return err
+			}
+			log.Info().Msg("Done with graphs.")
+			doneDatabaseAndCollection <- databaseAndCollections{databaseName: db.Name()}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		done <- err
+		return
 	}
 	done <- nil
 }
